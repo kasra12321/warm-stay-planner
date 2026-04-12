@@ -47,7 +47,7 @@ serve(async (req) => {
 
           if (LOVABLE_API_KEY && TWILIO_API_KEY) {
             const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
-            await fetch(`${GATEWAY_URL}/Messages.json`, {
+            const smsResponse = await fetch(`${GATEWAY_URL}/Messages.json`, {
               method: "POST",
               headers: {
                 Authorization: `Bearer ${LOVABLE_API_KEY}`,
