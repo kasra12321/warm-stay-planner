@@ -14,16 +14,297 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      heating_options: {
+        Row: {
+          active: boolean
+          created_at: string
+          id: string
+          price_per_day: number
+          temperature: number
+        }
+        Insert: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          price_per_day: number
+          temperature: number
+        }
+        Update: {
+          active?: boolean
+          created_at?: string
+          id?: string
+          price_per_day?: number
+          temperature?: number
+        }
+        Relationships: []
+      }
+      homes: {
+        Row: {
+          active: boolean
+          cover_photo_url: string | null
+          created_at: string
+          id: string
+          name: string
+          slug: string
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          cover_photo_url?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          slug: string
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          cover_photo_url?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          slug?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      order_dates: {
+        Row: {
+          date: string
+          id: string
+          order_id: string
+          price: number
+          temperature: number
+        }
+        Insert: {
+          date: string
+          id?: string
+          order_id: string
+          price: number
+          temperature: number
+        }
+        Update: {
+          date?: string
+          id?: string
+          order_id?: string
+          price?: number
+          temperature?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_dates_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          created_at: string
+          guest_mobile: string
+          guest_name: string
+          home_id: string
+          id: string
+          payment_method: Database["public"]["Enums"]["payment_method"]
+          status: Database["public"]["Enums"]["order_status"]
+          stripe_session_id: string | null
+          total: number
+        }
+        Insert: {
+          created_at?: string
+          guest_mobile: string
+          guest_name: string
+          home_id: string
+          id?: string
+          payment_method: Database["public"]["Enums"]["payment_method"]
+          status: Database["public"]["Enums"]["order_status"]
+          stripe_session_id?: string | null
+          total: number
+        }
+        Update: {
+          created_at?: string
+          guest_mobile?: string
+          guest_name?: string
+          home_id?: string
+          id?: string
+          payment_method?: Database["public"]["Enums"]["payment_method"]
+          status?: Database["public"]["Enums"]["order_status"]
+          stripe_session_id?: string | null
+          total?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          display_name: string | null
+          id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          display_name?: string | null
+          id?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      reminders: {
+        Row: {
+          action_type: Database["public"]["Enums"]["reminder_action"]
+          created_at: string
+          home_id: string
+          id: string
+          message: string
+          order_id: string
+          scheduled_at: string
+          sent: boolean
+          sent_at: string | null
+          target_temperature: number | null
+        }
+        Insert: {
+          action_type: Database["public"]["Enums"]["reminder_action"]
+          created_at?: string
+          home_id: string
+          id?: string
+          message: string
+          order_id: string
+          scheduled_at: string
+          sent?: boolean
+          sent_at?: string | null
+          target_temperature?: number | null
+        }
+        Update: {
+          action_type?: Database["public"]["Enums"]["reminder_action"]
+          created_at?: string
+          home_id?: string
+          id?: string
+          message?: string
+          order_id?: string
+          scheduled_at?: string
+          sent?: boolean
+          sent_at?: string | null
+          target_temperature?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "reminders_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      settings: {
+        Row: {
+          admin_calendar_email: string | null
+          admin_email: string | null
+          admin_sms_number: string | null
+          created_at: string
+          id: string
+          twilio_from_number: string | null
+          updated_at: string
+          venmo_handle: string | null
+          venmo_instructions: string | null
+          zelle_instructions: string | null
+        }
+        Insert: {
+          admin_calendar_email?: string | null
+          admin_email?: string | null
+          admin_sms_number?: string | null
+          created_at?: string
+          id?: string
+          twilio_from_number?: string | null
+          updated_at?: string
+          venmo_handle?: string | null
+          venmo_instructions?: string | null
+          zelle_instructions?: string | null
+        }
+        Update: {
+          admin_calendar_email?: string | null
+          admin_email?: string | null
+          admin_sms_number?: string | null
+          created_at?: string
+          id?: string
+          twilio_from_number?: string | null
+          updated_at?: string
+          venmo_handle?: string | null
+          venmo_instructions?: string | null
+          zelle_instructions?: string | null
+        }
+        Relationships: []
+      }
+      user_roles: {
+        Row: {
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_blocked_dates: {
+        Args: { p_home_id: string }
+        Returns: {
+          date: string
+        }[]
+      }
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin"
+      order_status:
+        | "venmo_submitted"
+        | "zelle_submitted"
+        | "stripe_pending"
+        | "stripe_paid"
+        | "stripe_failed"
+      payment_method: "venmo" | "zelle" | "stripe"
+      reminder_action: "turn_on" | "change" | "turn_off"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +431,17 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin"],
+      order_status: [
+        "venmo_submitted",
+        "zelle_submitted",
+        "stripe_pending",
+        "stripe_paid",
+        "stripe_failed",
+      ],
+      payment_method: ["venmo", "zelle", "stripe"],
+      reminder_action: ["turn_on", "change", "turn_off"],
+    },
   },
 } as const
