@@ -32,12 +32,17 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
   const createOrder = async (paymentMethod: 'venmo' | 'zelle' | 'stripe') => {
     setLoading(paymentMethod);
     try {
+      const statusMap = {
+        venmo: 'venmo_submitted' as const,
+        zelle: 'zelle_submitted' as const,
+        stripe: 'stripe_pending' as const,
+      };
       const orderData = {
         home_id: home.id,
         guest_name: guestInfo.name,
         guest_mobile: guestInfo.mobile,
         payment_method: paymentMethod,
-        status: paymentMethod === 'venmo' ? 'venmo_submitted' : paymentMethod === 'zelle' ? 'zelle_submitted' : 'stripe_pending',
+        status: statusMap[paymentMethod],
         total,
       };
 
