@@ -67,14 +67,15 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
       if (datesError) throw datesError;
 
-      // For Venmo/Zelle, create reminders immediately
+      // For Venmo/Zelle, create reminders and send SMS immediately
       if (paymentMethod !== 'stripe') {
         try {
-          await supabase.functions.invoke('create-reminders', {
-            body: { orderId: order.id },
-          });
+          await Promise.all([
+            supabase.functions.invoke('create-reminders', { body: { orderId: order.id } }),
+            supabase.functions.invoke('send-guest-sms', { body: { orderId: order.id } }),
+          ]);
         } catch (e) {
-          console.warn('Reminder creation deferred:', e);
+          console.warn('Reminder/SMS creation deferred:', e);
         }
       }
 
