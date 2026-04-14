@@ -93,7 +93,7 @@ serve(async (req) => {
                 "X-Connection-Api-Key": RESEND_API_KEY,
               },
               body: JSON.stringify({
-                from: "Pool Heat <onboarding@resend.dev>",
+                from: "Pool Heat <noreply@ocadventurehomes.com>",
                 to: [recipientEmail],
                 subject: `🔥 ${reminder.message}`,
                 html: emailHtml,
