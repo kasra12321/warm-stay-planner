@@ -1,0 +1,1 @@
+UPDATE reminders SET sent = false, sent_at = NULL WHERE sent = true;
