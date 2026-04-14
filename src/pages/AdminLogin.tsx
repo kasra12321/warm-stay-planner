@@ -46,7 +46,7 @@ const AdminLogin = () => {
           <CardTitle>Admin Login</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" type="email" value={email} onChange={e => setEmail(e.target.value)} required className="h-11" />
@@ -56,8 +56,11 @@ const AdminLogin = () => {
               <Input id="password" type="password" value={password} onChange={e => setPassword(e.target.value)} required className="h-11" />
             </div>
             <Button type="submit" className="w-full h-11" disabled={loading}>
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Sign In'}
+              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : isSignUp ? 'Create Account' : 'Sign In'}
             </Button>
+            <button type="button" onClick={() => setIsSignUp(!isSignUp)} className="w-full text-sm text-muted-foreground hover:underline">
+              {isSignUp ? 'Already have an account? Sign in' : 'Create admin account'}
+            </button>
           </form>
         </CardContent>
       </Card>
