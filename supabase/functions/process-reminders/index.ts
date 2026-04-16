@@ -21,7 +21,7 @@ serve(async (req) => {
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase
       .from("reminders")
-      .select("*, homes(name)")
+      .select("*, homes(name, internal_name)")
       .eq("sent", false)
       .lte("scheduled_at", now)
       .order("scheduled_at")

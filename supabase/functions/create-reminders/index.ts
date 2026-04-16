@@ -68,7 +68,7 @@ serve(async (req) => {
     if (orderErr || !order) throw new Error("Order not found");
 
     const dates = (order.order_dates as any[]).sort((a: any, b: any) => a.date.localeCompare(b.date));
-    const homeName = (order.homes as any).name;
+    const homeName = (order.homes as any).internal_name || (order.homes as any).name;
     const { dateStr: todayStr, hour: currentHour } = getNowPacific();
 
     // Find contiguous blocks
