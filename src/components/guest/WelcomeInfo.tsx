@@ -28,7 +28,7 @@ export function WelcomeInfo() {
             </li>
             <li className="flex items-start gap-2">
               <Thermometer className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
-              <span>The pool typically takes <span className="font-medium text-foreground">2–3 hours</span> to reach the higher temperature.</span>
+              <span>The pool typically takes <span className="font-medium text-foreground">2–4 hours</span> to reach the desired temperature, depending on the weather.</span>
             </li>
           </ul>
         </CardContent>
