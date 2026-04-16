@@ -87,7 +87,6 @@ const Index = () => {
             <HomeSelection onSelect={home => checkout.selectHome(home)} />
           </>
         )}
-        )}
         {checkout.step === 'guest' && checkout.selectedHome && (
           <GuestInfoForm
             initial={checkout.guestInfo}
