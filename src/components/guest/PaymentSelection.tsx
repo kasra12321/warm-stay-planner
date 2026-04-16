@@ -31,6 +31,10 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
   const createOrder = async (paymentMethod: 'venmo' | 'zelle' | 'stripe') => {
     setLoading(paymentMethod);
+    const stripeWindow = paymentMethod === 'stripe'
+      ? window.open('', '_blank', 'noopener,noreferrer')
+      : null;
+
     try {
       const statusMap = {
         venmo: 'venmo_submitted' as const,
@@ -87,10 +91,17 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
           });
           if (sessionError) throw sessionError;
           if (sessionData?.url) {
-            window.location.href = sessionData.url;
+            if (stripeWindow) {
+              stripeWindow.location.href = sessionData.url;
+              stripeWindow.focus();
+            } else {
+              window.location.href = sessionData.url;
+            }
             return;
           }
+          throw new Error('Missing Stripe checkout URL');
         } catch (e) {
+          stripeWindow?.close();
           toast.error('Unable to start payment. Please try again.');
           setLoading(null);
           return;
@@ -110,6 +121,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
       onComplete(summary);
     } catch (error) {
+      stripeWindow?.close();
       console.error('Order creation failed:', error);
       toast.error('Something went wrong. Please try again.');
     } finally {
