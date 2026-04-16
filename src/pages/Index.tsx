@@ -80,7 +80,7 @@ const Index = () => {
             <p className="text-muted-foreground">Loading your order...</p>
           </div>
         )}
-        {checkout.step === 'home' && (
+        {!stripeLoading && checkout.step === 'home' && (
           <HomeSelection onSelect={home => checkout.selectHome(home)} />
         )}
         {checkout.step === 'guest' && checkout.selectedHome && (
