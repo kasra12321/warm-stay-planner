@@ -74,6 +74,12 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="max-w-lg mx-auto px-4 py-6">
+        {stripeLoading && (
+          <div className="text-center py-12 space-y-3">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-muted-foreground">Loading your order...</p>
+          </div>
+        )}
         {checkout.step === 'home' && (
           <HomeSelection onSelect={home => checkout.selectHome(home)} />
         )}
