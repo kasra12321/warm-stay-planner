@@ -196,7 +196,36 @@ serve(async (req) => {
         target_temperature: null,
         message: `Turn off pool heat at ${homeName}`,
         sent: false,
-      });
+});
+
+function generateBookingICS(orderId: string, homeName: string, firstDate: string, lastDate: string, temps: string): string {
+  // Event spans from 8 AM on first date to 5 PM on last date (Pacific)
+  const formatICSDate = (dateStr: string, hour: number) => {
+    const d = `${dateStr.replace(/-/g, '')}T${String(hour).padStart(2, '0')}0000`;
+    return d;
+  };
+
+  const uid = `booking-${orderId}@poolheat`;
+
+  return `BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Pool Heat Checkout//EN
+METHOD:REQUEST
+BEGIN:VEVENT
+UID:${uid}
+DTSTART;TZID=America/Los_Angeles:${formatICSDate(firstDate, 8)}
+DTEND;TZID=America/Los_Angeles:${formatICSDate(lastDate, 17)}
+SUMMARY:🔥 Pool Heat: ${homeName} (${temps})
+DESCRIPTION:Pool heating booked for ${homeName} from ${firstDate} to ${lastDate} at ${temps}. Order #${orderId.slice(0, 8)}
+STATUS:CONFIRMED
+BEGIN:VALARM
+TRIGGER:-PT30M
+ACTION:DISPLAY
+DESCRIPTION:Pool heat starting soon at ${homeName}
+END:VALARM
+END:VEVENT
+END:VCALENDAR`;
+}
     }
 
     // Insert all reminders

@@ -129,31 +129,3 @@ serve(async (req) => {
   }
 });
 
-function generateICS(reminder: any): string {
-  const startDate = new Date(reminder.scheduled_at);
-  const endDate = new Date(startDate.getTime() + 30 * 60 * 1000);
-
-  const formatICSDate = (d: Date) =>
-    d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
-
-  const uid = `${reminder.id}@poolheat`;
-
-  return `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//Pool Heat Checkout//EN
-METHOD:REQUEST
-BEGIN:VEVENT
-UID:${uid}
-DTSTART:${formatICSDate(startDate)}
-DTEND:${formatICSDate(endDate)}
-SUMMARY:${reminder.message}
-DESCRIPTION:${reminder.message}
-STATUS:CONFIRMED
-BEGIN:VALARM
-TRIGGER:-PT10M
-ACTION:DISPLAY
-DESCRIPTION:${reminder.message}
-END:VALARM
-END:VEVENT
-END:VCALENDAR`;
-}
