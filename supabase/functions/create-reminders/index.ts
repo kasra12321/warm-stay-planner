@@ -205,6 +205,70 @@ serve(async (req) => {
       if (insertErr) throw insertErr;
     }
 
+    // Send calendar invite email with .ics for the booking
+    try {
+      const { data: settings } = await supabase.from("settings").select("*").single();
+      const recipientEmail = settings?.admin_calendar_email || settings?.admin_email;
+      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+      const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
+
+      if (recipientEmail && LOVABLE_API_KEY && RESEND_API_KEY) {
+        // Build a single calendar event spanning the full booking
+        const allDates = dates.map((d: any) => d.date).sort();
+        const firstDateStr = allDates[0];
+        const lastDateStr = allDates[allDates.length - 1];
+        const temps = [...new Set(dates.map((d: any) => d.temperature))].join("°/") + "°F";
+
+        const icsContent = generateBookingICS(orderId, homeName, firstDateStr, lastDateStr, temps);
+        const icsBase64 = btoa(icsContent);
+
+        const emailHtml = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #1a1a2e;">🔥 New Pool Heat Booking</h2>
+            <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 16px 0;">
+              <p style="margin: 0 0 8px; font-size: 16px;"><strong>${homeName}</strong></p>
+              <p style="margin: 0 0 4px; color: #666;">Guest: ${order.guest_name}</p>
+              <p style="margin: 0 0 4px; color: #666;">Dates: ${firstDateStr} to ${lastDateStr} (${allDates.length} day${allDates.length > 1 ? 's' : ''})</p>
+              <p style="margin: 0 0 4px; color: #666;">Temperature: ${temps}</p>
+              <p style="margin: 0; color: #666;">Total: $${order.total}</p>
+            </div>
+            <p style="color: #999; font-size: 12px;">A calendar event is attached to this email.</p>
+          </div>
+        `;
+
+        const GATEWAY_URL = "https://connector-gateway.lovable.dev/resend";
+        const emailResponse = await fetch(`${GATEWAY_URL}/emails`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${LOVABLE_API_KEY}`,
+            "X-Connection-Api-Key": RESEND_API_KEY,
+          },
+          body: JSON.stringify({
+            from: "Pool Heat <noreply@ocadventurehomes.com>",
+            to: [recipientEmail],
+            subject: `🔥 New Booking: ${homeName} — ${firstDateStr} to ${lastDateStr}`,
+            html: emailHtml,
+            attachments: [
+              {
+                filename: "booking.ics",
+                content: icsBase64,
+                content_type: "text/calendar",
+              },
+            ],
+          }),
+        });
+
+        if (!emailResponse.ok) {
+          console.error("Booking calendar email failed:", await emailResponse.text());
+        } else {
+          console.log(`Booking calendar invite sent to ${recipientEmail}`);
+        }
+      }
+    } catch (e) {
+      console.error("Calendar invite email error:", e);
+    }
+
     return new Response(JSON.stringify({ success: true, count: reminders.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

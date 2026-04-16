@@ -61,15 +61,13 @@ serve(async (req) => {
           }
         }
 
-        // Send email with .ics calendar invite via Resend
+        // Send reminder email via Resend (no calendar invite — that's sent at booking time)
         if (settings?.admin_email || settings?.admin_calendar_email) {
           const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
           const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
           if (LOVABLE_API_KEY && RESEND_API_KEY) {
             const recipientEmail = settings.admin_calendar_email || settings.admin_email;
-            const icsContent = generateICS(reminder);
-            const icsBase64 = btoa(icsContent);
             const homeName = (reminder.homes as any)?.name || "Property";
 
             const emailHtml = `
@@ -80,7 +78,6 @@ serve(async (req) => {
                   <p style="margin: 0; color: #666;">Home: ${homeName}</p>
                   ${reminder.target_temperature ? `<p style="margin: 4px 0 0; color: #666;">Temperature: ${reminder.target_temperature}°F</p>` : ''}
                 </div>
-                <p style="color: #999; font-size: 12px;">A calendar event is attached to this email.</p>
               </div>
             `;
 
@@ -97,13 +94,6 @@ serve(async (req) => {
                 to: [recipientEmail],
                 subject: `🔥 ${reminder.message}`,
                 html: emailHtml,
-                attachments: [
-                  {
-                    filename: "reminder.ics",
-                    content: icsBase64,
-                    content_type: "text/calendar",
-                  },
-                ],
               }),
             });
 
