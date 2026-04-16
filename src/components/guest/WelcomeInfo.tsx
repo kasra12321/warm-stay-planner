@@ -8,7 +8,7 @@ export function WelcomeInfo() {
         <h2 className="text-2xl font-bold text-foreground">Pool Heat Upgrade</h2>
         <p className="text-muted-foreground text-sm leading-relaxed max-w-md mx-auto">
           Our pool is automatically heated to about <span className="font-semibold text-foreground">81°F</span> at no additional cost. 
-          Some guests prefer it a little warmer — with this upgrade, we'll heat the pool up to approximately <span className="font-semibold text-foreground">85°F</span> for the days you select.
+          Some guests prefer it a little warmer — with this upgrade, we'll heat the pool to either <span className="font-semibold text-foreground">85°F ($75/day)</span> or <span className="font-semibold text-foreground">90°F ($100/day)</span> based on your selection.
         </p>
         <p className="text-muted-foreground text-xs leading-relaxed max-w-md mx-auto">
           Because reaching higher temperatures requires a significant amount of natural gas, this option helps cover the additional heating cost.
