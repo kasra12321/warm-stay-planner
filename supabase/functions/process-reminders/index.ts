@@ -21,7 +21,7 @@ serve(async (req) => {
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase
       .from("reminders")
-      .select("*, homes(name)")
+      .select("*, homes(name, internal_name)")
       .eq("sent", false)
       .lte("scheduled_at", now)
       .order("scheduled_at")
@@ -68,7 +68,7 @@ serve(async (req) => {
 
           if (LOVABLE_API_KEY && RESEND_API_KEY) {
             const recipientEmail = settings.admin_calendar_email || settings.admin_email;
-            const homeName = (reminder.homes as any)?.name || "Property";
+            const homeName = (reminder.homes as any)?.internal_name || (reminder.homes as any)?.name || "Property";
 
             const emailHtml = `
               <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">

@@ -61,14 +61,14 @@ serve(async (req) => {
     // Get order with dates and home
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("*, order_dates(*), homes(name)")
+      .select("*, order_dates(*), homes(name, internal_name)")
       .eq("id", orderId)
       .single();
 
     if (orderErr || !order) throw new Error("Order not found");
 
     const dates = (order.order_dates as any[]).sort((a: any, b: any) => a.date.localeCompare(b.date));
-    const homeName = (order.homes as any).name;
+    const homeName = (order.homes as any).internal_name || (order.homes as any).name;
     const { dateStr: todayStr, hour: currentHour } = getNowPacific();
 
     // Find contiguous blocks
