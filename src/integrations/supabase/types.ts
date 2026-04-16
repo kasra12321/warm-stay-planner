@@ -44,6 +44,7 @@ export type Database = {
           cover_photo_url: string | null
           created_at: string
           id: string
+          internal_name: string | null
           name: string
           slug: string
           updated_at: string
@@ -53,6 +54,7 @@ export type Database = {
           cover_photo_url?: string | null
           created_at?: string
           id?: string
+          internal_name?: string | null
           name: string
           slug: string
           updated_at?: string
@@ -62,6 +64,7 @@ export type Database = {
           cover_photo_url?: string | null
           created_at?: string
           id?: string
+          internal_name?: string | null
           name?: string
           slug?: string
           updated_at?: string
