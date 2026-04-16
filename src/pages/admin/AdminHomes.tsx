@@ -65,6 +65,21 @@ const AdminHomes = () => {
     onError: (e: any) => toast.error(e.message),
   });
 
+  const [deleteTarget, setDeleteTarget] = useState<any>(null);
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from('homes').delete().eq('id', id);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-homes'] });
+      toast.success('Property deleted');
+      setDeleteTarget(null);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   const toggleActive = async (id: string, active: boolean) => {
     await supabase.from('homes').update({ active }).eq('id', id);
     queryClient.invalidateQueries({ queryKey: ['admin-homes'] });
