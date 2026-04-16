@@ -61,7 +61,7 @@ serve(async (req) => {
     // Get order with dates and home
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("*, order_dates(*), homes(name)")
+      .select("*, order_dates(*), homes(name, internal_name)")
       .eq("id", orderId)
       .single();
 
