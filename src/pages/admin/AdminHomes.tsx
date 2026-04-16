@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,17 +6,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Home as HomeIcon } from 'lucide-react';
+import { Plus, Pencil, Home as HomeIcon, Upload, Loader2 } from 'lucide-react';
 
 const AdminHomes = () => {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingHome, setEditingHome] = useState<any>(null);
   const [name, setName] = useState('');
+  const [internalName, setInternalName] = useState('');
   const [slug, setSlug] = useState('');
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: homes, isLoading } = useQuery({
     queryKey: ['admin-homes'],
@@ -29,18 +33,32 @@ const AdminHomes = () => {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
+      let homeId = editingHome?.id;
+
       if (editingHome) {
-        const { error } = await supabase.from('homes').update({ name, slug }).eq('id', editingHome.id);
+        const { error } = await supabase.from('homes').update({ name, slug, internal_name: internalName || name }).eq('id', homeId);
         if (error) throw error;
       } else {
-        const { error } = await supabase.from('homes').insert({ name, slug });
+        const { data, error } = await supabase.from('homes').insert({ name, slug, internal_name: internalName || name }).select().single();
         if (error) throw error;
+        homeId = data.id;
+      }
+
+      if (photoFile && homeId) {
+        const ext = photoFile.name.split('.').pop();
+        const path = `${homeId}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from('home-photos').upload(path, photoFile, { upsert: true });
+        if (uploadError) throw uploadError;
+        const { data: { publicUrl } } = supabase.storage.from('home-photos').getPublicUrl(path);
+        await supabase.from('homes').update({ cover_photo_url: publicUrl }).eq('id', homeId);
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-homes'] });
       setDialogOpen(false);
       setEditingHome(null);
+      setPhotoFile(null);
+      setPhotoPreview(null);
       toast.success(editingHome ? 'Home updated' : 'Home added');
     },
     onError: (e: any) => toast.error(e.message),
@@ -51,36 +69,47 @@ const AdminHomes = () => {
     queryClient.invalidateQueries({ queryKey: ['admin-homes'] });
   };
 
-  const handlePhotoUpload = async (homeId: string, file: File) => {
-    const ext = file.name.split('.').pop();
-    const path = `${homeId}.${ext}`;
-    const { error: uploadError } = await supabase.storage.from('home-photos').upload(path, file, { upsert: true });
-    if (uploadError) { toast.error('Upload failed'); return; }
-    const { data: { publicUrl } } = supabase.storage.from('home-photos').getPublicUrl(path);
-    await supabase.from('homes').update({ cover_photo_url: publicUrl }).eq('id', homeId);
-    queryClient.invalidateQueries({ queryKey: ['admin-homes'] });
-    toast.success('Photo uploaded');
-  };
-
   const openEdit = (home: any) => {
     setEditingHome(home);
     setName(home.name);
+    setInternalName(home.internal_name || '');
     setSlug(home.slug);
+    setPhotoFile(null);
+    setPhotoPreview(home.cover_photo_url || null);
     setDialogOpen(true);
   };
 
   const openNew = () => {
     setEditingHome(null);
     setName('');
+    setInternalName('');
     setSlug('');
+    setPhotoFile(null);
+    setPhotoPreview(null);
     setDialogOpen(true);
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setPhotoFile(file);
+      setPhotoPreview(URL.createObjectURL(file));
+    }
+  };
+
+  // Auto-generate slug from display name
+  const handleNameChange = (value: string) => {
+    setName(value);
+    if (!editingHome) {
+      setSlug(value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''));
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-foreground">Homes</h2>
-        <Button onClick={openNew} size="sm"><Plus className="w-4 h-4 mr-1" /> Add Home</Button>
+        <h2 className="text-2xl font-bold text-foreground">Properties</h2>
+        <Button onClick={openNew} size="sm"><Plus className="w-4 h-4 mr-1" /> Add Property</Button>
       </div>
 
       <div className="grid gap-3">
@@ -99,17 +128,16 @@ const AdminHomes = () => {
                   <span className="font-semibold text-foreground">{home.name}</span>
                   <Badge variant={home.active ? 'default' : 'secondary'}>{home.active ? 'Active' : 'Inactive'}</Badge>
                 </div>
-                <p className="text-sm text-muted-foreground">/{home.slug}</p>
+                {home.internal_name && home.internal_name !== home.name && (
+                  <p className="text-sm text-muted-foreground">Internal: {home.internal_name}</p>
+                )}
+                <p className="text-xs text-muted-foreground">/{home.slug}</p>
               </div>
               <div className="flex items-center gap-2">
                 <Switch checked={home.active} onCheckedChange={v => toggleActive(home.id, v)} />
                 <Button variant="ghost" size="icon" onClick={() => openEdit(home)}>
                   <Pencil className="w-4 h-4" />
                 </Button>
-                <label className="cursor-pointer">
-                  <input type="file" accept="image/*" className="hidden" onChange={e => e.target.files?.[0] && handlePhotoUpload(home.id, e.target.files[0])} />
-                  <span className="text-xs text-primary hover:underline">Photo</span>
-                </label>
               </div>
             </CardContent>
           </Card>
@@ -119,19 +147,47 @@ const AdminHomes = () => {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editingHome ? 'Edit Home' : 'Add Home'}</DialogTitle>
+            <DialogTitle>{editingHome ? 'Edit Property' : 'Add Property'}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Photo upload */}
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input value={name} onChange={e => setName(e.target.value)} placeholder="Beach House" />
+              <Label>Cover Photo</Label>
+              <div
+                className="border-2 border-dashed rounded-lg p-4 flex flex-col items-center gap-2 cursor-pointer hover:border-primary transition-colors"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {photoPreview ? (
+                  <img src={photoPreview} alt="Preview" className="w-full h-32 object-cover rounded-md" />
+                ) : (
+                  <>
+                    <Upload className="w-8 h-8 text-muted-foreground" />
+                    <span className="text-sm text-muted-foreground">Click to upload photo</span>
+                  </>
+                )}
+                <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFileSelect} />
+              </div>
             </div>
+
+            <div className="space-y-2">
+              <Label>Display Name <span className="text-xs text-muted-foreground">(shown to guests)</span></Label>
+              <Input value={name} onChange={e => handleNameChange(e.target.value)} placeholder="The Beach House" />
+            </div>
+
+            <div className="space-y-2">
+              <Label>Internal Name <span className="text-xs text-muted-foreground">(used in your notifications)</span></Label>
+              <Input value={internalName} onChange={e => setInternalName(e.target.value)} placeholder={name || 'e.g. 123 Ocean Dr'} />
+              {!internalName && <p className="text-xs text-muted-foreground">If blank, display name will be used</p>}
+            </div>
+
             <div className="space-y-2">
               <Label>Slug</Label>
               <Input value={slug} onChange={e => setSlug(e.target.value)} placeholder="beach-house" />
               <p className="text-xs text-muted-foreground">Used in URL: ?home={slug || 'your-slug'}</p>
             </div>
-            <Button onClick={() => saveMutation.mutate()} disabled={!name || !slug} className="w-full">
+
+            <Button onClick={() => saveMutation.mutate()} disabled={!name || !slug || saveMutation.isPending} className="w-full">
+              {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
               {editingHome ? 'Update' : 'Create'}
             </Button>
           </div>
