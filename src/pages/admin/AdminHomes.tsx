@@ -154,6 +154,9 @@ const AdminHomes = () => {
                 <Button variant="ghost" size="icon" onClick={() => openEdit(home)}>
                   <Pencil className="w-4 h-4" />
                 </Button>
+                <Button variant="ghost" size="icon" onClick={() => setDeleteTarget(home)} className="text-destructive hover:text-destructive">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
               </div>
             </CardContent>
           </Card>
