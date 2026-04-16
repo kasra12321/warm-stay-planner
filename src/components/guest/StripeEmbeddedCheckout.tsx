@@ -5,7 +5,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft } from 'lucide-react';
 
-const stripePromise = loadStripe(import.meta.env.VITE_STRIPE_PUBLISHABLE_KEY || '');
+const stripePromise = loadStripe('pk_live_51I6KZUDeDZMsoCz7KJrkP1BoM4uhii3usitXFKNF1IJ9Xmz4V38sRHkqwBbbRZe3KLbtCpWYvivV3Ud80DfWEyrm00R4QM6nia');
 
 interface Props {
   orderId: string;
