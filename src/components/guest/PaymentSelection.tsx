@@ -6,8 +6,9 @@ import { useSettings } from '@/hooks/useData';
 import { supabase } from '@/integrations/supabase/client';
 import type { Home, GuestInfo, SelectedDate, OrderSummary } from '@/lib/types';
 import { formatDateDisplay } from '@/lib/pacific-time';
-import { ArrowLeft, CreditCard, Copy, Check, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, CreditCard, Copy, Check, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { StripeEmbeddedCheckout } from './StripeEmbeddedCheckout';
 
 interface Props {
   home: Home;
@@ -22,6 +23,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
   const { data: settings } = useSettings();
   const [loading, setLoading] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [stripeOrderId, setStripeOrderId] = useState<string | null>(null);
 
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
@@ -31,9 +33,6 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
   const createOrder = async (paymentMethod: 'venmo' | 'zelle' | 'stripe') => {
     setLoading(paymentMethod);
-    const stripeWindow = paymentMethod === 'stripe'
-      ? window.open('', '_blank', 'noopener,noreferrer')
-      : null;
 
     try {
       const statusMap = {
@@ -84,28 +83,10 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
       }
 
       if (paymentMethod === 'stripe') {
-        // Create Stripe checkout session
-        try {
-          const { data: sessionData, error: sessionError } = await supabase.functions.invoke('create-stripe-session', {
-            body: { orderId: order.id },
-          });
-          if (sessionError) throw sessionError;
-          if (sessionData?.url) {
-            if (stripeWindow) {
-              stripeWindow.location.href = sessionData.url;
-              stripeWindow.focus();
-            } else {
-              window.location.href = sessionData.url;
-            }
-            return;
-          }
-          throw new Error('Missing Stripe checkout URL');
-        } catch (e) {
-          stripeWindow?.close();
-          toast.error('Unable to start payment. Please try again.');
-          setLoading(null);
-          return;
-        }
+        // Show embedded Stripe checkout
+        setStripeOrderId(order.id);
+        setLoading(null);
+        return;
       }
 
       const summary: OrderSummary = {
@@ -121,13 +102,22 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
       onComplete(summary);
     } catch (error) {
-      stripeWindow?.close();
       console.error('Order creation failed:', error);
       toast.error('Something went wrong. Please try again.');
     } finally {
       setLoading(null);
     }
   };
+
+  // Show embedded Stripe checkout
+  if (stripeOrderId) {
+    return (
+      <StripeEmbeddedCheckout
+        orderId={stripeOrderId}
+        onBack={() => setStripeOrderId(null)}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
