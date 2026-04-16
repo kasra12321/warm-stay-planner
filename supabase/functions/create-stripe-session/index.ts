@@ -64,12 +64,13 @@ serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2023-10-16" });
 
-    // Determine return URL from request origin
+    // Determine return URL from request origin for embedded checkout
     const origin = req.headers.get("origin") || "https://id-preview--71ee5697-ad31-4604-a0c2-5a224ca1d02c.lovable.app";
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       mode: "payment",
+      ui_mode: "embedded",
       line_items: orderDates.map((od: any) => ({
         price_data: {
           currency: "usd",
@@ -80,8 +81,7 @@ serve(async (req) => {
         },
         quantity: 1,
       })),
-      success_url: `${origin}/?payment_status=success&order_id=${orderId}`,
-      cancel_url: `${origin}/?payment_status=cancelled&order_id=${orderId}`,
+      return_url: `${origin}/?payment_status=success&order_id=${orderId}`,
       metadata: { order_id: orderId },
     });
 
@@ -91,7 +91,7 @@ serve(async (req) => {
       .update({ stripe_session_id: session.id })
       .eq("id", orderId);
 
-    return new Response(JSON.stringify({ url: session.url }), {
+    return new Response(JSON.stringify({ clientSecret: session.client_secret }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: any) {
