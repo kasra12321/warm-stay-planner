@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { Header } from '@/components/guest/Header';
 import { HomeSelection } from '@/components/guest/HomeSelection';
+import { WelcomeInfo } from '@/components/guest/WelcomeInfo';
 import { GuestInfoForm } from '@/components/guest/GuestInfoForm';
 import { DateSelection } from '@/components/guest/DateSelection';
 import { PaymentSelection } from '@/components/guest/PaymentSelection';
@@ -81,7 +82,10 @@ const Index = () => {
           </div>
         )}
         {!stripeLoading && checkout.step === 'home' && (
-          <HomeSelection onSelect={home => checkout.selectHome(home)} />
+          <>
+            <WelcomeInfo />
+            <HomeSelection onSelect={home => checkout.selectHome(home)} />
+          </>
         )}
         {checkout.step === 'guest' && checkout.selectedHome && (
           <GuestInfoForm
