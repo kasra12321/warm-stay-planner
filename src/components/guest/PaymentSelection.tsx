@@ -181,7 +181,6 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
             >
               {loading === 'venmo' ? <Loader2 className="w-4 h-4 animate-spin" /> : (
                 <>
-                  <ExternalLink className="w-4 h-4" />
                   Submit & Open Venmo
                 </>
               )}
