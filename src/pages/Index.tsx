@@ -1,5 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { supabase } from '@/integrations/supabase/client';
 import { Header } from '@/components/guest/Header';
 import { HomeSelection } from '@/components/guest/HomeSelection';
 import { GuestInfoForm } from '@/components/guest/GuestInfoForm';
@@ -8,12 +9,14 @@ import { PaymentSelection } from '@/components/guest/PaymentSelection';
 import { Confirmation } from '@/components/guest/Confirmation';
 import { useCheckout } from '@/hooks/useCheckout';
 import { useHomeBySlug } from '@/hooks/useData';
+import type { OrderSummary } from '@/lib/types';
 
 const Index = () => {
   const [searchParams] = useSearchParams();
   const homeSlug = searchParams.get('home');
   const { data: prefillHome } = useHomeBySlug(homeSlug);
   const checkout = useCheckout();
+  const [stripeLoading, setStripeLoading] = useState(false);
 
   // Handle home prefill from URL
   useEffect(() => {
@@ -22,22 +25,48 @@ const Index = () => {
     }
   }, [prefillHome]);
 
-  // Handle Stripe return
+  // Handle Stripe return - fetch order from DB
   useEffect(() => {
     const status = searchParams.get('payment_status');
     const orderId = searchParams.get('order_id');
     if (status === 'success' && orderId) {
-      checkout.setOrderSummary({
-        id: orderId,
-        home: checkout.selectedHome || { id: '', name: 'Your Property', slug: '', cover_photo_url: null, active: true },
-        guestName: checkout.guestInfo.name || 'Guest',
-        guestMobile: checkout.guestInfo.mobile || '',
-        dates: checkout.selectedDates,
-        total: checkout.total,
-        paymentMethod: 'stripe',
-        status: 'stripe_paid',
-      });
-      checkout.setStep('confirmation');
+      setStripeLoading(true);
+      (async () => {
+        try {
+          const { data: order, error } = await supabase
+            .from('orders')
+            .select('*, homes(name, slug, cover_photo_url, active), order_dates(*)')
+            .eq('id', orderId)
+            .single();
+
+          if (error || !order) throw new Error('Order not found');
+
+          const home = order.homes as any;
+          const dates = (order.order_dates as any[]).map((d: any) => ({
+            date: d.date,
+            temperature: d.temperature,
+            price: Number(d.price),
+          }));
+
+          const summary: OrderSummary = {
+            id: order.id,
+            home: { id: order.home_id, name: home.name, slug: home.slug, cover_photo_url: home.cover_photo_url, active: home.active },
+            guestName: order.guest_name,
+            guestMobile: order.guest_mobile,
+            dates,
+            total: Number(order.total),
+            paymentMethod: 'stripe',
+            status: order.status === 'stripe_paid' ? 'stripe_paid' : 'stripe_pending',
+          };
+
+          checkout.setOrderSummary(summary);
+          checkout.setStep('confirmation');
+        } catch (e) {
+          console.error('Failed to load order:', e);
+        } finally {
+          setStripeLoading(false);
+        }
+      })();
     }
   }, [searchParams]);
 
@@ -45,7 +74,13 @@ const Index = () => {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="max-w-lg mx-auto px-4 py-6">
-        {checkout.step === 'home' && (
+        {stripeLoading && (
+          <div className="text-center py-12 space-y-3">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-muted-foreground">Loading your order...</p>
+          </div>
+        )}
+        {!stripeLoading && checkout.step === 'home' && (
           <HomeSelection onSelect={home => checkout.selectHome(home)} />
         )}
         {checkout.step === 'guest' && checkout.selectedHome && (
