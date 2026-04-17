@@ -13,7 +13,7 @@ serve(async (req) => {
     const sig = req.headers.get("stripe-signature");
     if (!sig) throw new Error("No signature");
 
-    const event = stripe.webhooks.constructEvent(body, sig, webhookSecret);
+    const event = await stripe.webhooks.constructEventAsync(body, sig, webhookSecret);
 
     if (event.type === "checkout.session.completed") {
       const session = event.data.object as Stripe.Checkout.Session;
