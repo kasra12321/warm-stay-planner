@@ -7,7 +7,7 @@ import { Switch } from '@/components/ui/switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
-import { Loader2, Plug, Unplug, RefreshCw, Save, Activity } from 'lucide-react';
+import { Loader2, Plug, Unplug, RefreshCw, Save, Activity, Home as HomeIcon, Leaf, RotateCw } from 'lucide-react';
 
 interface Home {
   id: string;
@@ -16,12 +16,24 @@ interface Home {
   iaqualink_serial: string | null;
   iaqualink_enabled: boolean;
   iaqualink_baseline_temp: number;
+  hospitable_property_id: string | null;
+  eco_mode_enabled: boolean;
+  eco_temp: number;
 }
 
 interface Device {
   serial_number: string;
   name: string;
   device_type?: string;
+}
+
+interface PoolState {
+  home_id: string;
+  current_mode: string;
+  current_target_temp: number | null;
+  last_synced_at: string | null;
+  next_checkin_date: string | null;
+  notes: string | null;
 }
 
 const callFn = async (action: string, extra: Record<string, any> = {}) => {
@@ -39,19 +51,25 @@ const AdminIAquaLink = () => {
   const [connecting, setConnecting] = useState(false);
   const [connected, setConnected] = useState(false);
   const [hasSecrets, setHasSecrets] = useState(false);
+  const [hasHospitable, setHasHospitable] = useState(false);
   const [cachedEmail, setCachedEmail] = useState<string | null>(null);
   const [lastLoginAt, setLastLoginAt] = useState<string | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [homes, setHomes] = useState<Home[]>([]);
+  const [poolStates, setPoolStates] = useState<Record<string, PoolState>>({});
   const [savingHomeId, setSavingHomeId] = useState<string | null>(null);
   const [testingHomeId, setTestingHomeId] = useState<string | null>(null);
+  const [testingHospHomeId, setTestingHospHomeId] = useState<string | null>(null);
   const [testResults, setTestResults] = useState<Record<string, any>>({});
+  const [hospResults, setHospResults] = useState<Record<string, any>>({});
+  const [syncing, setSyncing] = useState(false);
 
   const loadStatus = async () => {
     try {
       const status = await callFn('status');
       setConnected(status.connected);
       setHasSecrets(status.hasSecrets);
+      setHasHospitable(!!status.hasHospitable);
       setCachedEmail(status.cached?.email ?? null);
       setLastLoginAt(status.cached?.last_login_at ?? null);
       if (status.connected) {
@@ -70,7 +88,7 @@ const AdminIAquaLink = () => {
   const loadHomes = async () => {
     const { data, error } = await supabase
       .from('homes')
-      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp')
+      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp')
       .order('name');
     if (error) {
       toast({ title: 'Failed to load homes', description: error.message, variant: 'destructive' });
@@ -79,9 +97,16 @@ const AdminIAquaLink = () => {
     setHomes(data as Home[]);
   };
 
+  const loadPoolStates = async () => {
+    const { data } = await supabase.from('home_pool_state').select('*');
+    const map: Record<string, PoolState> = {};
+    (data || []).forEach((s: any) => { map[s.home_id] = s; });
+    setPoolStates(map);
+  };
+
   useEffect(() => {
     (async () => {
-      await Promise.all([loadStatus(), loadHomes()]);
+      await Promise.all([loadStatus(), loadHomes(), loadPoolStates()]);
       setLoading(false);
     })();
   }, []);
@@ -112,6 +137,24 @@ const AdminIAquaLink = () => {
     }
   };
 
+  const handleRunSync = async () => {
+    setSyncing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-pool-occupancy', { body: {} });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      toast({
+        title: 'Sync complete',
+        description: `${data.changes?.length || 0} change(s), ${data.errors?.length || 0} error(s)`,
+      });
+      await loadPoolStates();
+    } catch (e: any) {
+      toast({ title: 'Sync failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const updateHome = (id: string, patch: Partial<Home>) => {
     setHomes((prev) => prev.map((h) => (h.id === id ? { ...h, ...patch } : h)));
   };
@@ -124,6 +167,9 @@ const AdminIAquaLink = () => {
         iaqualink_serial: home.iaqualink_serial,
         iaqualink_enabled: home.iaqualink_enabled,
         iaqualink_baseline_temp: home.iaqualink_baseline_temp,
+        hospitable_property_id: home.hospitable_property_id,
+        eco_mode_enabled: home.eco_mode_enabled,
+        eco_temp: home.eco_temp,
       })
       .eq('id', home.id);
     setSavingHomeId(null);
@@ -147,6 +193,20 @@ const AdminIAquaLink = () => {
     }
   };
 
+  const testHospitable = async (home: Home) => {
+    if (!home.hospitable_property_id) return;
+    setTestingHospHomeId(home.id);
+    try {
+      const res = await callFn('test-hospitable-property', { property_id: home.hospitable_property_id });
+      setHospResults((prev) => ({ ...prev, [home.id]: res }));
+      toast({ title: `Hospitable: ${res.count} upcoming reservation(s)` });
+    } catch (e: any) {
+      toast({ title: 'Hospitable test failed', description: e.message, variant: 'destructive' });
+    } finally {
+      setTestingHospHomeId(null);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12 text-muted-foreground">
@@ -158,22 +218,22 @@ const AdminIAquaLink = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Pool Control (iAquaLink)</h1>
+        <h1 className="text-2xl font-bold">Pool Control (iAquaLink + Eco Mode)</h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Connect your Jandy/iAquaLink account so the system can automatically set pool target temperatures when guests purchase heat upgrades.
+          Connect your Jandy/iAquaLink account and Hospitable so the system can auto-set pool temps for guests and drop to eco temp when vacant.
         </p>
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Plug className="w-5 h-5" /> Connection
+            <Plug className="w-5 h-5" /> iAquaLink Connection
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           {!hasSecrets && (
             <div className="rounded-md bg-destructive/10 text-destructive text-sm p-3">
-              iAquaLink credentials are not configured. Ask Lovable to set the IAQUALINK_EMAIL and IAQUALINK_PASSWORD secrets.
+              iAquaLink credentials are not configured.
             </div>
           )}
           {connected ? (
@@ -210,6 +270,32 @@ const AdminIAquaLink = () => {
 
       <Card>
         <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <HomeIcon className="w-5 h-5" /> Hospitable (Occupancy)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {hasHospitable ? (
+            <div className="text-sm flex items-center justify-between">
+              <span className="text-green-600 dark:text-green-400 font-medium">✓ Hospitable PAT configured</span>
+              <Button onClick={handleRunSync} disabled={syncing} size="sm" variant="outline">
+                {syncing ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <RotateCw className="w-4 h-4 mr-2" />}
+                Run sync now
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-md bg-destructive/10 text-destructive text-sm p-3">
+              HOSPITABLE_PAT not configured. Add it as a secret to enable eco mode.
+            </div>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Eco sync runs hourly and lowers pools to eco temp when vacant {'>'}24h. Restores baseline 24h before next check-in.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Property Mapping</CardTitle>
         </CardHeader>
         <CardContent>
@@ -219,6 +305,8 @@ const AdminIAquaLink = () => {
             <div className="space-y-4">
               {homes.map((home) => {
                 const status = testResults[home.id];
+                const hosp = hospResults[home.id];
+                const state = poolStates[home.id];
                 return (
                   <div key={home.id} className="border rounded-lg p-4 space-y-3">
                     <div className="flex items-center justify-between">
@@ -273,6 +361,35 @@ const AdminIAquaLink = () => {
                       </div>
                     </div>
 
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t pt-3">
+                      <div className="md:col-span-2">
+                        <Label className="text-xs text-muted-foreground">Hospitable Property ID</Label>
+                        <Input
+                          placeholder="UUID from Hospitable"
+                          value={home.hospitable_property_id || ''}
+                          onChange={(e) => updateHome(home.id, { hospitable_property_id: e.target.value || null })}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Eco temp (°F)</Label>
+                        <Input
+                          type="number"
+                          value={home.eco_temp}
+                          onChange={(e) => updateHome(home.id, { eco_temp: parseInt(e.target.value) || 75 })}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Leaf className="w-4 h-4 text-green-600" />
+                      <Label htmlFor={`eco-${home.id}`} className="text-sm">Eco mode (drop to eco temp when vacant {'>'}24h)</Label>
+                      <Switch
+                        id={`eco-${home.id}`}
+                        checked={home.eco_mode_enabled}
+                        onCheckedChange={(v) => updateHome(home.id, { eco_mode_enabled: v })}
+                      />
+                    </div>
+
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => saveHome(home)} disabled={savingHomeId === home.id}>
                         {savingHomeId === home.id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Save className="w-4 h-4 mr-2" />}
@@ -285,16 +402,46 @@ const AdminIAquaLink = () => {
                         disabled={testingHomeId === home.id || !home.iaqualink_serial || !connected}
                       >
                         {testingHomeId === home.id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
-                        Test
+                        Test pool
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => testHospitable(home)}
+                        disabled={testingHospHomeId === home.id || !home.hospitable_property_id || !hasHospitable}
+                      >
+                        {testingHospHomeId === home.id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <HomeIcon className="w-4 h-4 mr-2" />}
+                        Test Hospitable
                       </Button>
                     </div>
+
+                    {state && (
+                      <div className="rounded-md bg-muted p-3 text-xs space-y-1">
+                        <div>Mode: <span className="font-medium capitalize">{state.current_mode}</span></div>
+                        <div>Current target: <span className="font-medium">{state.current_target_temp ?? '—'}°F</span></div>
+                        {state.next_checkin_date && (
+                          <div>Next check-in: <span className="font-medium">{state.next_checkin_date}</span></div>
+                        )}
+                        {state.last_synced_at && (
+                          <div className="text-muted-foreground">Synced: {new Date(state.last_synced_at).toLocaleString()}</div>
+                        )}
+                      </div>
+                    )}
 
                     {status && (
                       <div className="rounded-md bg-muted p-3 text-xs space-y-1">
                         <div>Pool temp: <span className="font-medium">{status.pool_temp ?? '—'}°F</span></div>
                         <div>Pool set point: <span className="font-medium">{status.pool_set_point ?? '—'}°F</span></div>
                         <div>Pool heater: <span className="font-medium">{status.pool_heater === '0' ? 'off' : 'on'}</span></div>
-                        <div>Status: <span className="font-medium">{status.status ?? '—'}</span></div>
+                      </div>
+                    )}
+
+                    {hosp && (
+                      <div className="rounded-md bg-muted p-3 text-xs space-y-1">
+                        <div>Upcoming reservations: <span className="font-medium">{hosp.count}</span></div>
+                        {hosp.next && (
+                          <div>Next: <span className="font-medium">{hosp.next.guest || 'Guest'}</span> — {hosp.next.check_in?.slice(0, 10)} → {hosp.next.check_out?.slice(0, 10)}</div>
+                        )}
                       </div>
                     )}
                   </div>
