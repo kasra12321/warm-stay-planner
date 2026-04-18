@@ -170,6 +170,25 @@ serve(async (req) => {
           })
           .eq("id", reminder.id);
 
+        // Update home_pool_state so eco sync knows what mode we're in
+        if (autoExecuted && reminder.home_id) {
+          const isGuestHeat = reminder.action_type === "turn_on" || reminder.action_type === "change";
+          const appliedTemp =
+            reminder.action_type === "turn_off"
+              ? home.iaqualink_baseline_temp ?? 80
+              : reminder.target_temperature;
+          await supabase.from("home_pool_state").upsert(
+            {
+              home_id: reminder.home_id,
+              current_mode: isGuestHeat ? "guest_heat" : "baseline",
+              current_target_temp: appliedTemp,
+              last_synced_at: new Date().toISOString(),
+              notes: `reminder: ${reminder.action_type}`,
+            },
+            { onConflict: "home_id" },
+          );
+        }
+
         processed++;
       } catch (e) {
         console.error(`Failed to process reminder ${reminder.id}:`, e);
