@@ -61,14 +61,20 @@ serve(async (req) => {
     // Get order with dates and home
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("*, order_dates(*), homes(name, internal_name)")
+      .select("*, order_dates(*), homes(name, internal_name, iaqualink_enabled, iaqualink_baseline_temp)")
       .eq("id", orderId)
       .single();
 
     if (orderErr || !order) throw new Error("Order not found");
 
     const dates = (order.order_dates as any[]).sort((a: any, b: any) => a.date.localeCompare(b.date));
-    const homeName = (order.homes as any).internal_name || (order.homes as any).name;
+    const homeNode = order.homes as any;
+    const homeName = homeNode.internal_name || homeNode.name;
+    const isIAqua = !!homeNode.iaqualink_enabled;
+    const baselineTemp = homeNode.iaqualink_baseline_temp ?? 80;
+    const turnOffMessage = isIAqua
+      ? `Set pool back to ${baselineTemp}°F at ${homeName}`
+      : `Turn off pool heat at ${homeName}`;
     const { dateStr: todayStr, hour: currentHour } = getNowPacific();
 
     // Find contiguous blocks
@@ -185,7 +191,7 @@ serve(async (req) => {
         scheduled_at: toPacificISO(lastDate.date, 16, 0),
         action_type: "turn_off",
         target_temperature: null,
-        message: `Turn off pool heat at ${homeName}`,
+        message: turnOffMessage,
         sent: false,
       });
       reminders.push({
@@ -194,7 +200,7 @@ serve(async (req) => {
         scheduled_at: toPacificISO(lastDate.date, 17, 0),
         action_type: "turn_off",
         target_temperature: null,
-        message: `Turn off pool heat at ${homeName}`,
+        message: turnOffMessage,
         sent: false,
 });
 

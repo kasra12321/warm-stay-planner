@@ -14,6 +14,7 @@ import AdminSchedule from "./pages/admin/AdminSchedule";
 import AdminHeatSettings from "./pages/admin/AdminHeatSettings";
 import AdminPaymentSettings from "./pages/admin/AdminPaymentSettings";
 import AdminNotificationSettings from "./pages/admin/AdminNotificationSettings";
+import AdminIAquaLink from "./pages/admin/AdminIAquaLink";
 
 const queryClient = new QueryClient();
 
@@ -34,6 +35,7 @@ const App = () => (
             <Route path="heat-settings" element={<AdminHeatSettings />} />
             <Route path="payment-settings" element={<AdminPaymentSettings />} />
             <Route path="notification-settings" element={<AdminNotificationSettings />} />
+            <Route path="iaqualink" element={<AdminIAquaLink />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
