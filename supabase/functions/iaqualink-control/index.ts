@@ -290,9 +290,53 @@ serve(async (req) => {
         .limit(1)
         .maybeSingle();
       const hasSecrets = !!(Deno.env.get("IAQUALINK_EMAIL") && Deno.env.get("IAQUALINK_PASSWORD"));
-      return new Response(JSON.stringify({ success: true, connected: !!cached, hasSecrets, cached }), {
+      const hasHospitable = !!Deno.env.get("HOSPITABLE_PAT");
+      return new Response(JSON.stringify({ success: true, connected: !!cached, hasSecrets, hasHospitable, cached }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    if (action === "test-hospitable-property") {
+      const { property_id } = body;
+      const pat = Deno.env.get("HOSPITABLE_PAT");
+      if (!pat) {
+        return new Response(JSON.stringify({ error: "HOSPITABLE_PAT not configured" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (!property_id) {
+        return new Response(JSON.stringify({ error: "property_id required" }), {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const start = new Date().toISOString().slice(0, 10);
+      const end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const url = `https://public.api.hospitable.com/v2/reservations?properties[]=${encodeURIComponent(
+        property_id,
+      )}&start_date=${start}&end_date=${end}&date_query=checkin`;
+      const r = await fetch(url, {
+        headers: { Authorization: `Bearer ${pat}`, Accept: "application/json" },
+      });
+      const text = await r.text();
+      if (!r.ok) {
+        return new Response(JSON.stringify({ error: `Hospitable ${r.status}: ${text}` }), {
+          status: 502,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const data = JSON.parse(text);
+      const reservations = (data.data || []).filter((r: any) => r.status === "accepted");
+      const next = reservations[0] || null;
+      return new Response(
+        JSON.stringify({
+          success: true,
+          count: reservations.length,
+          next: next ? { check_in: next.check_in, check_out: next.check_out, guest: next.guest?.first_name } : null,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     if (action === "disconnect") {
