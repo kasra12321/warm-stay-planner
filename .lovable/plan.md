@@ -1,139 +1,80 @@
 
-# Pool Heat Checkout — Implementation Plan
 
-## Overview
-A mobile-first web app where vacation rental guests select pool heating dates/temperatures and pay via Venmo, Zelle, or Stripe. Includes a single-admin dashboard for managing homes, orders, reminders, and settings.
+## iAquaLink Auto-Heat Integration
 
----
+Add automatic pool temperature control for Jandy/iAquaLink-equipped properties so that when a guest purchases a heat upgrade, the target temp is set automatically (and reverted to 80°F afterward). Notifications still fire so you can verify it worked.
 
-## Phase 1: Database Schema & Backend Setup
+### 1. Database changes (migration)
 
-### Supabase Tables
-- **profiles** — admin user (single admin, linked to auth.users)
-- **user_roles** — role-based access (admin role enum)
-- **homes** — name, slug, cover_photo_url, active status
-- **heating_options** — temperature (°F), price_per_day, active (global settings)
-- **orders** — guest_name, guest_mobile, home_id, payment_method (venmo/zelle/stripe), status (venmo_submitted, zelle_submitted, stripe_pending, stripe_paid, stripe_failed), total, stripe_session_id, created_at
-- **order_dates** — order_id, date, temperature, price
-- **reminders** — order_id, home_id, scheduled_at (UTC, computed from Pacific), action_type (turn_on/change/turn_off), target_temperature, sent status, message
-- **settings** — singleton row: venmo_handle, venmo_instructions, zelle_instructions, admin_sms_number, admin_email, admin_calendar_email
+**New table `iaqualink_credentials`** (singleton, admin-only RLS):
+- `id`, `email` (text), `password` (text — stored encrypted via pgcrypto/secret, see note below), `auth_token`, `session_id`, `user_id_external`, `last_login_at`, `updated_at`
 
-### RLS Policies
-- Public read on homes (active only) and heating_options
-- Public insert on orders and order_dates (guest flow)
-- Admin-only access to all tables for management
-- Blocked dates query: public read on order_dates joined with stripe_paid orders
+Since edge functions need the raw password to re-login when sessions expire, we'll store it in a Supabase **secret** (`IAQUALINK_PASSWORD` + `IAQUALINK_EMAIL`) rather than the DB. The table will only cache `auth_token`, `session_id`, `user_id_external`, and `last_login_at`. Admin sets credentials by entering them in UI → calls an edge function that saves them as secrets.
 
-### Storage
-- `home-photos` bucket for cover images
+**Add columns to `homes`**:
+- `iaqualink_serial` (text, nullable) — serial number of the controller
+- `iaqualink_enabled` (boolean, default false)
+- `iaqualink_baseline_temp` (int, default 80) — temp to revert to
 
----
+**Add column to `reminders`**:
+- `auto_executed` (boolean, default false) — true if iAquaLink set the temp automatically
+- `auto_execution_result` (text, nullable) — success/error message from the API call
 
-## Phase 2: Public Guest Flow (6 screens/steps)
+### 2. New edge function: `iaqualink-control`
 
-### 1. Landing / Home Selection
-- Cards with cover photo + home name
-- URL param `?home=slug` locks selection
-- Mobile-first grid layout
+Single function exposing actions via POST body:
+- `action: "login"` — accepts email/password, calls Zodiac login, stores tokens in DB + saves credentials as secrets (admin only).
+- `action: "list-devices"` — returns device list so admin can pick a serial per home.
+- `action: "set-temp"` — `{ home_id, temp }`. Loads serial + session, calls `set_temps` (temp2=pool), retries with re-login on 401.
+- `action: "get-status"` — `{ home_id }` returns `get_home` data for verification UI.
 
-### 2. Guest Info Form
-- Name + mobile number fields (required)
-- Simple validation, no account creation
+All require admin auth (verify JWT + has_role).
 
-### 3. Calendar & Temperature Selection
-- Custom mobile calendar component
-- Tap date → bottom sheet with 85°F/$75 or 90°F/$100 options
-- Selected dates visually marked with temperature badge
-- Tap selected date to edit temp or remove
-- Blocked dates (stripe_paid) shown as unavailable
-- Same-day after 12 PM Pacific warning (non-blocking)
-- Live order summary below calendar
+### 3. Modify `process-reminders` edge function
 
-### 4. Payment Selection
-- Three options: Venmo, Zelle, Credit Card
-- **Venmo**: Show handle + deep link button → create order immediately on submit
-- **Zelle**: Show instructions with copy buttons → create order immediately on submit
-- **Stripe**: Create checkout session server-side → embedded Stripe Checkout
+For each due reminder:
+- Look up the home. If `iaqualink_enabled` and serial set:
+  - For `turn_on` / `change` reminders → call iAquaLink set_temps with `target_temperature`
+  - For `turn_off` reminders → call set_temps with `iaqualink_baseline_temp` (80) **instead of toggling off**
+  - Record result in `auto_executed` / `auto_execution_result`
+  - Modify SMS/email message to include "✅ Auto-set to X°F" or "⚠️ Auto-set failed: <error>"
+- Always still send the SMS + email (user wants to verify).
 
-### 5. Server-Side Validation (Edge Functions)
-- `create-order` — validates pricing, checks blocked dates, creates order + order_dates + reminders
-- `create-stripe-session` — validates availability, creates Stripe checkout session with server-calculated total
-- `stripe-webhook` — handles payment success: marks paid, blocks dates, triggers SMS + reminders
-- Re-check blocked dates at every server step for Stripe
+### 4. Modify reminder creation (`create-reminders` or wherever turn_off reminders are generated)
 
-### 6. Confirmation Screen
-- Order summary: home, guest, dates/temps, total, payment method, status message
-- SMS sent via Twilio to guest mobile
+When generating turn_off reminders for an iAquaLink-enabled home, the action stays `turn_off` but the message should read "Set pool back to 80°F" and the executor uses baseline temp. (No schema change needed — handled in process-reminders.)
 
----
+### 5. Admin UI: new tab `Pool Control` (`/admin/iaqualink`)
 
-## Phase 3: Reminder Engine
+Add to `AdminLayout` nav. New page `src/pages/admin/AdminIAquaLink.tsx`:
 
-### Contiguous Block Detection
-- Group order_dates into contiguous blocks per order
-- For each block, generate reminders:
-  - **First date**: 8 AM + 9 AM Pacific → "Turn on pool heat to X°"
-  - **Temp change date**: 8 AM + 9 AM Pacific → "Change pool heat to X°"
-  - **Last date**: 4 PM + 5 PM Pacific → "Turn off pool heat"
+- **Credentials section**: Email + password inputs, "Connect" button → calls `iaqualink-control` `login`. Shows "Connected as ..." with last login timestamp + "Test Connection" + "Disconnect".
+- **Device mapping section**: Lists devices fetched from `list-devices`. Each home (from `homes` table) gets:
+  - Toggle: Enabled
+  - Dropdown: Select device serial
+  - Number input: Baseline temp (default 80)
+  - "Test" button → calls `get-status` and shows current pool_temp / set_point / heater state
+- Save updates the `homes` row.
 
-### Same-Day Immediate Rule
-- If order created today ≥ 8 AM Pacific and a turn-on/change is needed today:
-  - Send immediately
-  - Skip 9 AM if created before 9 AM
-  - Turn-off reminders still fire at 4/5 PM
+### 6. Security notes
 
-### Reminder Delivery (Edge Function + pg_cron)
-- `process-reminders` cron job runs every minute
-- Sends due reminders via:
-  - **SMS** (Twilio) to admin phone
-  - **Email** to admin email
-  - **Calendar invite** (.ics attachment) to admin calendar email
-- No deduplication across orders
+- iAquaLink credentials only writable by admins (RLS).
+- Password stored as Supabase secret, not in DB or client.
+- All iAquaLink HTTP calls happen server-side in edge functions.
+- Rate limiting: process-reminders already runs once/minute and reminders are typically minutes apart, well under the 15s polling guidance.
 
----
+### Files to create
+- `src/pages/admin/AdminIAquaLink.tsx`
+- `supabase/functions/iaqualink-control/index.ts`
+- New migration for schema
 
-## Phase 4: Admin Dashboard
+### Files to edit
+- `src/pages/AdminLayout.tsx` (nav item)
+- `src/App.tsx` (route)
+- `supabase/functions/process-reminders/index.ts` (auto-execute + augment messages)
+- `supabase/functions/create-reminders/index.ts` (turn_off message wording for iAquaLink homes)
 
-### Auth
-- Single admin login (email/password via Supabase Auth)
-- Protected routes
+### Open question
 
-### Dashboard Sections
-1. **Overview** — upcoming reminders, recent orders, payment method counts
-2. **Homes** — CRUD, photo upload, active/inactive toggle, slug management
-3. **Heat Settings** — edit global temperature options + prices
-4. **Payment Settings** — Venmo handle/instructions, Zelle instructions
-5. **Notification Settings** — admin SMS number, email, calendar email
-6. **Orders** — full order list with all details
-7. **Schedule** — upcoming reminders in list/calendar view
-8. **Stripe Status** — connection health indicator
+The doc mentions session expiry — to re-login automatically when the cached session is invalid, the edge function needs the password. Confirm: **OK to store the iAquaLink email + password as Supabase secrets** (encrypted at rest, only accessible to your edge functions, never sent to the browser)?
 
----
-
-## Phase 5: Integrations
-
-### Stripe
-- Enable via Lovable Stripe integration
-- Embedded checkout (not redirect)
-- Webhook for payment confirmation
-- Server-side price validation
-
-### Twilio (Connector)
-- Guest confirmation SMS
-- Admin reminder SMS
-- Via connector gateway in Edge Functions
-
-### Email + ICS
-- Admin reminder emails with .ics attachments
-- Generated server-side in Edge Functions
-
----
-
-## Phase 6: Seed Data & Polish
-
-- Sample homes (3 properties with placeholder photos)
-- Default heating options (85°F/$75, 90°F/$100)
-- Default settings
-- Environment variable documentation
-- Setup notes for Stripe, Twilio, admin account creation
-- Mobile-responsive polish throughout
