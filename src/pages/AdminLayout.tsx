@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link, Outlet, useLocation } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
-import { Waves, Home, Settings, List, Calendar, LogOut, BarChart3, Thermometer, CreditCard, Bell } from 'lucide-react';
+import { Waves, Home, Settings, List, Calendar, LogOut, BarChart3, Thermometer, CreditCard, Bell, Droplets } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const navItems = [
@@ -10,6 +10,7 @@ const navItems = [
   { label: 'Orders', icon: List, path: '/admin/orders' },
   { label: 'Schedule', icon: Calendar, path: '/admin/schedule' },
   { label: 'Heat Settings', icon: Thermometer, path: '/admin/heat-settings' },
+  { label: 'Pool Control', icon: Droplets, path: '/admin/iaqualink' },
   { label: 'Payment', icon: CreditCard, path: '/admin/payment-settings' },
   { label: 'Notifications', icon: Bell, path: '/admin/notification-settings' },
 ];
