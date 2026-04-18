@@ -1,0 +1,1 @@
+ALTER TABLE public.homes ADD COLUMN IF NOT EXISTS iaqualink_temp_sensor_index integer NOT NULL DEFAULT 1;
