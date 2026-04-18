@@ -191,7 +191,7 @@ serve(async (req) => {
         scheduled_at: toPacificISO(lastDate.date, 16, 0),
         action_type: "turn_off",
         target_temperature: null,
-        message: `Turn off pool heat at ${homeName}`,
+        message: turnOffMessage,
         sent: false,
       });
       reminders.push({
@@ -200,7 +200,7 @@ serve(async (req) => {
         scheduled_at: toPacificISO(lastDate.date, 17, 0),
         action_type: "turn_off",
         target_temperature: null,
-        message: `Turn off pool heat at ${homeName}`,
+        message: turnOffMessage,
         sent: false,
 });
 
