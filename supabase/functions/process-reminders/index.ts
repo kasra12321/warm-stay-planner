@@ -21,7 +21,7 @@ serve(async (req) => {
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase
       .from("reminders")
-      .select("*, homes(name, internal_name)")
+      .select("*, homes(name, internal_name, iaqualink_enabled, iaqualink_serial, iaqualink_baseline_temp)")
       .eq("sent", false)
       .lte("scheduled_at", now)
       .order("scheduled_at")
@@ -38,6 +38,54 @@ serve(async (req) => {
 
     for (const reminder of dueReminders) {
       try {
+        const home = reminder.homes as any;
+        const homeName = home?.internal_name || home?.name || "Property";
+
+        // Attempt iAquaLink auto-execution if enabled and serial set
+        let autoExecuted = false;
+        let autoResult: string | null = null;
+        let autoStatusLine = "";
+
+        if (home?.iaqualink_enabled && home?.iaqualink_serial) {
+          let targetTemp: number | null = null;
+          if (reminder.action_type === "turn_on" || reminder.action_type === "change") {
+            targetTemp = reminder.target_temperature;
+          } else if (reminder.action_type === "turn_off") {
+            targetTemp = home.iaqualink_baseline_temp ?? 80;
+          }
+
+          if (targetTemp !== null) {
+            try {
+              const resp = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${supabaseKey}`,
+                },
+                body: JSON.stringify({
+                  action: "set-temp",
+                  home_id: reminder.home_id,
+                  temp: targetTemp,
+                }),
+              });
+              const data = await resp.json();
+              if (resp.ok && data.success) {
+                autoExecuted = true;
+                autoResult = `Set to ${targetTemp}°F`;
+                autoStatusLine = `\n\n✅ Auto-set to ${targetTemp}°F`;
+              } else {
+                autoResult = `Failed: ${data.error || "unknown"}`;
+                autoStatusLine = `\n\n⚠️ Auto-set FAILED: ${data.error || "unknown"}`;
+              }
+            } catch (e: any) {
+              autoResult = `Error: ${e.message}`;
+              autoStatusLine = `\n\n⚠️ Auto-set ERROR: ${e.message}`;
+            }
+          }
+        }
+
+        const augmentedMessage = reminder.message + autoStatusLine;
+
         // Send SMS via Twilio connector if configured
         if (settings?.admin_sms_number && settings?.twilio_from_number) {
           const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
@@ -55,20 +103,25 @@ serve(async (req) => {
               body: new URLSearchParams({
                 To: settings.admin_sms_number,
                 From: settings.twilio_from_number,
-                Body: reminder.message,
+                Body: augmentedMessage,
               }),
             });
           }
         }
 
-        // Send reminder email via Resend (no calendar invite — that's sent at booking time)
+        // Send reminder email via Resend
         if (settings?.admin_email || settings?.admin_calendar_email) {
           const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
           const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
           if (LOVABLE_API_KEY && RESEND_API_KEY) {
             const recipientEmail = settings.admin_calendar_email || settings.admin_email;
-            const homeName = (reminder.homes as any)?.internal_name || (reminder.homes as any)?.name || "Property";
+
+            const autoBadge = autoExecuted
+              ? `<div style="background:#d4edda;color:#155724;padding:10px;border-radius:6px;margin:12px 0;">✅ <strong>Auto-set to ${reminder.action_type === "turn_off" ? (home.iaqualink_baseline_temp ?? 80) : reminder.target_temperature}°F</strong> via iAquaLink</div>`
+              : autoResult
+              ? `<div style="background:#f8d7da;color:#721c24;padding:10px;border-radius:6px;margin:12px 0;">⚠️ <strong>Auto-set failed:</strong> ${autoResult}</div>`
+              : "";
 
             const emailHtml = `
               <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -78,6 +131,7 @@ serve(async (req) => {
                   <p style="margin: 0; color: #666;">Home: ${homeName}</p>
                   ${reminder.target_temperature ? `<p style="margin: 4px 0 0; color: #666;">Temperature: ${reminder.target_temperature}°F</p>` : ''}
                 </div>
+                ${autoBadge}
               </div>
             `;
 
@@ -92,7 +146,7 @@ serve(async (req) => {
               body: JSON.stringify({
                 from: "Pool Heat <noreply@ocadventurehomes.com>",
                 to: [recipientEmail],
-                subject: `🔥 ${reminder.message}`,
+                subject: `🔥 ${reminder.message}${autoExecuted ? " (auto-set ✅)" : autoResult ? " (auto-set ⚠️)" : ""}`,
                 html: emailHtml,
               }),
             });
@@ -105,10 +159,15 @@ serve(async (req) => {
           }
         }
 
-        // Mark as sent
+        // Mark as sent + record auto-exec result
         await supabase
           .from("reminders")
-          .update({ sent: true, sent_at: new Date().toISOString() })
+          .update({
+            sent: true,
+            sent_at: new Date().toISOString(),
+            auto_executed: autoExecuted,
+            auto_execution_result: autoResult,
+          })
           .eq("id", reminder.id);
 
         processed++;
@@ -128,4 +187,3 @@ serve(async (req) => {
     });
   }
 });
-
