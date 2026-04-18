@@ -326,7 +326,7 @@ const AdminIAquaLink = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <Label className="text-xs text-muted-foreground">Device serial</Label>
                         {devices.length > 0 ? (
