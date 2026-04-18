@@ -38,11 +38,61 @@ export type Database = {
         }
         Relationships: []
       }
+      home_pool_state: {
+        Row: {
+          created_at: string
+          current_mode: string
+          current_target_temp: number | null
+          home_id: string
+          id: string
+          last_occupancy_check: string | null
+          last_synced_at: string | null
+          next_checkin_date: string | null
+          notes: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_mode?: string
+          current_target_temp?: number | null
+          home_id: string
+          id?: string
+          last_occupancy_check?: string | null
+          last_synced_at?: string | null
+          next_checkin_date?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_mode?: string
+          current_target_temp?: number | null
+          home_id?: string
+          id?: string
+          last_occupancy_check?: string | null
+          last_synced_at?: string | null
+          next_checkin_date?: string | null
+          notes?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_pool_state_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: true
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       homes: {
         Row: {
           active: boolean
           cover_photo_url: string | null
           created_at: string
+          eco_mode_enabled: boolean
+          eco_temp: number
+          hospitable_property_id: string | null
           iaqualink_baseline_temp: number
           iaqualink_enabled: boolean
           iaqualink_serial: string | null
@@ -56,6 +106,9 @@ export type Database = {
           active?: boolean
           cover_photo_url?: string | null
           created_at?: string
+          eco_mode_enabled?: boolean
+          eco_temp?: number
+          hospitable_property_id?: string | null
           iaqualink_baseline_temp?: number
           iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
@@ -69,6 +122,9 @@ export type Database = {
           active?: boolean
           cover_photo_url?: string | null
           created_at?: string
+          eco_mode_enabled?: boolean
+          eco_temp?: number
+          hospitable_property_id?: string | null
           iaqualink_baseline_temp?: number
           iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
