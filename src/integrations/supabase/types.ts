@@ -43,6 +43,9 @@ export type Database = {
           active: boolean
           cover_photo_url: string | null
           created_at: string
+          iaqualink_baseline_temp: number
+          iaqualink_enabled: boolean
+          iaqualink_serial: string | null
           id: string
           internal_name: string | null
           name: string
@@ -53,6 +56,9 @@ export type Database = {
           active?: boolean
           cover_photo_url?: string | null
           created_at?: string
+          iaqualink_baseline_temp?: number
+          iaqualink_enabled?: boolean
+          iaqualink_serial?: string | null
           id?: string
           internal_name?: string | null
           name: string
@@ -63,11 +69,44 @@ export type Database = {
           active?: boolean
           cover_photo_url?: string | null
           created_at?: string
+          iaqualink_baseline_temp?: number
+          iaqualink_enabled?: boolean
+          iaqualink_serial?: string | null
           id?: string
           internal_name?: string | null
           name?: string
           slug?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      iaqualink_credentials: {
+        Row: {
+          auth_token: string | null
+          email: string | null
+          id: string
+          last_login_at: string | null
+          session_id: string | null
+          updated_at: string
+          user_id_external: string | null
+        }
+        Insert: {
+          auth_token?: string | null
+          email?: string | null
+          id?: string
+          last_login_at?: string | null
+          session_id?: string | null
+          updated_at?: string
+          user_id_external?: string | null
+        }
+        Update: {
+          auth_token?: string | null
+          email?: string | null
+          id?: string
+          last_login_at?: string | null
+          session_id?: string | null
+          updated_at?: string
+          user_id_external?: string | null
         }
         Relationships: []
       }
@@ -171,6 +210,8 @@ export type Database = {
       reminders: {
         Row: {
           action_type: Database["public"]["Enums"]["reminder_action"]
+          auto_executed: boolean
+          auto_execution_result: string | null
           created_at: string
           home_id: string
           id: string
@@ -183,6 +224,8 @@ export type Database = {
         }
         Insert: {
           action_type: Database["public"]["Enums"]["reminder_action"]
+          auto_executed?: boolean
+          auto_execution_result?: string | null
           created_at?: string
           home_id: string
           id?: string
@@ -195,6 +238,8 @@ export type Database = {
         }
         Update: {
           action_type?: Database["public"]["Enums"]["reminder_action"]
+          auto_executed?: boolean
+          auto_execution_result?: string | null
           created_at?: string
           home_id?: string
           id?: string
