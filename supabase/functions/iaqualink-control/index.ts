@@ -52,12 +52,13 @@ async function iaquaGetHome(serial: string, sessionId: string) {
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
-async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number) {
+async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number, tempIndex: 1 | 2 = 1) {
+  const param = tempIndex === 2 ? "temp2" : "temp1";
   const url =
     `${SESSION_URL}?actionID=command&command=set_temps` +
     `&serial=${encodeURIComponent(serial)}` +
     `&sessionID=${encodeURIComponent(sessionId)}` +
-    `&temp2=${tempF}`;
+    `&${param}=${tempF}`;
   const r = await fetch(url);
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
@@ -236,7 +237,8 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const res = await withRelogin(supabase, (sid) => iaquaSetPoolTemp(home.iaqualink_serial, sid, temp));
+      const tempIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      const res = await withRelogin(supabase, (sid) => iaquaSetPoolTemp(home.iaqualink_serial, sid, temp, tempIndex));
       if (res.status >= 400) {
         return new Response(JSON.stringify({ error: `set_temps ${res.status}: ${JSON.stringify(res.body)}` }), {
           status: 502,

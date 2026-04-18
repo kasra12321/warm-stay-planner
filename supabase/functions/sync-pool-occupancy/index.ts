@@ -13,11 +13,13 @@ interface Reservation {
 }
 
 async function fetchReservations(propertyId: string, pat: string): Promise<Reservation[]> {
-  const start = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  // Look back 14 days so currently-occupied stays (check-in before today) are included.
+  // Omit date_query=checkin so the API returns reservations overlapping the window, not only those whose check-in falls in it.
+  const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const url = `https://public.api.hospitable.com/v2/reservations?properties[]=${encodeURIComponent(
     propertyId,
-  )}&start_date=${start}&end_date=${end}&date_query=checkin`;
+  )}&start_date=${start}&end_date=${end}`;
   const r = await fetch(url, {
     headers: { Authorization: `Bearer ${pat}`, Accept: "application/json" },
   });
