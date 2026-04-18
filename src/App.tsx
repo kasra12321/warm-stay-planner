@@ -35,6 +35,7 @@ const App = () => (
             <Route path="heat-settings" element={<AdminHeatSettings />} />
             <Route path="payment-settings" element={<AdminPaymentSettings />} />
             <Route path="notification-settings" element={<AdminNotificationSettings />} />
+            <Route path="iaqualink" element={<AdminIAquaLink />} />
           </Route>
           <Route path="*" element={<NotFound />} />
         </Routes>
