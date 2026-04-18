@@ -361,7 +361,21 @@ const AdminIAquaLink = () => {
                           onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
                         />
                       </div>
-                    </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Temperature setpoint</Label>
+                        <Select
+                          value={String(home.iaqualink_temp_sensor_index ?? 1)}
+                          onValueChange={(v) => updateHome(home.id, { iaqualink_temp_sensor_index: parseInt(v) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">temp1 (pool — most common)</SelectItem>
+                            <SelectItem value="2">temp2 (spa / alt body)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t pt-3">
                       <div className="md:col-span-2">
