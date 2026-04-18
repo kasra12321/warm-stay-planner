@@ -1,80 +1,69 @@
 
 
-## iAquaLink Auto-Heat Integration
+## Off-Season Eco Mode (75°F When Vacant)
 
-Add automatic pool temperature control for Jandy/iAquaLink-equipped properties so that when a guest purchases a heat upgrade, the target temp is set automatically (and reverted to 80°F afterward). Notifications still fire so you can verify it worked.
+Goal: For iAquaLink-enabled homes, automatically drop the pool target to **75°F** when the property has no guests for **>1 day**, and restore baseline (80°F) before the next check-in. Guest purchases (85/90°F) still override.
 
-### 1. Database changes (migration)
+### How we'll get occupancy
 
-**New table `iaqualink_credentials`** (singleton, admin-only RLS):
-- `id`, `email` (text), `password` (text — stored encrypted via pgcrypto/secret, see note below), `auth_token`, `session_id`, `user_id_external`, `last_login_at`, `updated_at`
+The Hospitable MCP server requires a paid plan and rejects calls from this project. Instead, we'll use the **Hospitable Public REST API** directly with a **Personal Access Token (PAT)** stored as a Supabase secret.
 
-Since edge functions need the raw password to re-login when sessions expire, we'll store it in a Supabase **secret** (`IAQUALINK_PASSWORD` + `IAQUALINK_EMAIL`) rather than the DB. The table will only cache `auth_token`, `session_id`, `user_id_external`, and `last_login_at`. Admin sets credentials by entering them in UI → calls an edge function that saves them as secrets.
+- Endpoint: `GET https://public.api.hospitable.com/v2/reservations?properties[]=<id>&start_date=...&end_date=...&date_query=checkin`
+- We poll once/hour per home and compute occupancy from confirmed reservations (`accepted` status).
 
-**Add columns to `homes`**:
-- `iaqualink_serial` (text, nullable) — serial number of the controller
-- `iaqualink_enabled` (boolean, default false)
-- `iaqualink_baseline_temp` (int, default 80) — temp to revert to
+User must:
+1. Create a PAT at Hospitable → Apps → Personal Access Tokens
+2. Paste it once in admin; we store as `HOSPITABLE_PAT` secret
+3. Map each iAquaLink home to its Hospitable `property_id` (added in admin UI)
 
-**Add column to `reminders`**:
-- `auto_executed` (boolean, default false) — true if iAquaLink set the temp automatically
-- `auto_execution_result` (text, nullable) — success/error message from the API call
+### Logic
 
-### 2. New edge function: `iaqualink-control`
+For each iAquaLink-enabled home with a Hospitable property mapping, every hour:
 
-Single function exposing actions via POST body:
-- `action: "login"` — accepts email/password, calls Zodiac login, stores tokens in DB + saves credentials as secrets (admin only).
-- `action: "list-devices"` — returns device list so admin can pick a serial per home.
-- `action: "set-temp"` — `{ home_id, temp }`. Loads serial + session, calls `set_temps` (temp2=pool), retries with re-login on 401.
-- `action: "get-status"` — `{ home_id }` returns `get_home` data for verification UI.
+1. Fetch upcoming + current reservations (next 14 days).
+2. Determine state for **today**:
+   - **Occupied** (guest currently checked in) → leave temp alone (guest purchases or baseline already handle it).
+   - **Check-in within 24h** → ensure baseline 80°F (warm-up window).
+   - **Vacant ≥24h gap until next check-in** AND no active heat-upgrade order → set to **75°F (eco)**.
+3. Skip eco if there's an active paid order for today/tomorrow (don't fight guest purchases).
+4. Track last-applied state in DB to avoid redundant API calls and so we know when to restore.
 
-All require admin auth (verify JWT + has_role).
+### Schema changes (migration)
 
-### 3. Modify `process-reminders` edge function
+**`homes`**: add `hospitable_property_id` (text, nullable), `eco_mode_enabled` (bool, default true), `eco_temp` (int, default 75).
 
-For each due reminder:
-- Look up the home. If `iaqualink_enabled` and serial set:
-  - For `turn_on` / `change` reminders → call iAquaLink set_temps with `target_temperature`
-  - For `turn_off` reminders → call set_temps with `iaqualink_baseline_temp` (80) **instead of toggling off**
-  - Record result in `auto_executed` / `auto_execution_result`
-  - Modify SMS/email message to include "✅ Auto-set to X°F" or "⚠️ Auto-set failed: <error>"
-- Always still send the SMS + email (user wants to verify).
+**New table `home_pool_state`** (one row per home): `home_id`, `current_mode` ('eco'|'baseline'|'guest_heat'), `current_target_temp`, `last_synced_at`, `last_occupancy_check`, `next_checkin_date` (nullable), `notes`. Admin-only RLS.
 
-### 4. Modify reminder creation (`create-reminders` or wherever turn_off reminders are generated)
+### New edge function: `sync-pool-occupancy`
 
-When generating turn_off reminders for an iAquaLink-enabled home, the action stays `turn_off` but the message should read "Set pool back to 80°F" and the executor uses baseline temp. (No schema change needed — handled in process-reminders.)
+- Loops over iAquaLink-enabled homes with `hospitable_property_id`.
+- Fetches reservations from Hospitable API using `HOSPITABLE_PAT`.
+- Computes desired target temp per the rules above.
+- If different from `home_pool_state.current_target_temp`, calls `iaqualink-control` `set-temp` and updates state row.
+- Sends a single summary SMS/email if any changes happened (so you can verify, like the existing reminders).
 
-### 5. Admin UI: new tab `Pool Control` (`/admin/iaqualink`)
+Schedule: pg_cron hourly.
 
-Add to `AdminLayout` nav. New page `src/pages/admin/AdminIAquaLink.tsx`:
+### Interaction with existing flows
 
-- **Credentials section**: Email + password inputs, "Connect" button → calls `iaqualink-control` `login`. Shows "Connected as ..." with last login timestamp + "Test Connection" + "Disconnect".
-- **Device mapping section**: Lists devices fetched from `list-devices`. Each home (from `homes` table) gets:
-  - Toggle: Enabled
-  - Dropdown: Select device serial
-  - Number input: Baseline temp (default 80)
-  - "Test" button → calls `get-status` and shows current pool_temp / set_point / heater state
-- Save updates the `homes` row.
+- `process-reminders` (guest heat) **wins** — when it sets 85/90°F, it also writes `current_mode='guest_heat'` to `home_pool_state` so the eco sync skips that home until checkout.
+- The existing "set back to baseline 80°F" reminder (post-stay) keeps firing; the eco sync then drops it to 75°F on the next hourly run if vacancy continues.
 
-### 6. Security notes
+### Admin UI changes
 
-- iAquaLink credentials only writable by admins (RLS).
-- Password stored as Supabase secret, not in DB or client.
-- All iAquaLink HTTP calls happen server-side in edge functions.
-- Rate limiting: process-reminders already runs once/minute and reminders are typically minutes apart, well under the 15s polling guidance.
+In `AdminIAquaLink.tsx`, per-home row, add:
+- Hospitable Property ID (text input with "Test" button → fetches next reservation)
+- Eco Mode toggle + Eco Temp input (default 75)
+- Display: current mode, current target, last sync time, next check-in date
 
-### Files to create
-- `src/pages/admin/AdminIAquaLink.tsx`
-- `supabase/functions/iaqualink-control/index.ts`
-- New migration for schema
+Add a **"Hospitable PAT"** card at the top of the page (below iAquaLink credentials) with a single password field → saves to `HOSPITABLE_PAT` secret. Status indicator shows "Connected" if secret present.
 
-### Files to edit
-- `src/pages/AdminLayout.tsx` (nav item)
-- `src/App.tsx` (route)
-- `supabase/functions/process-reminders/index.ts` (auto-execute + augment messages)
-- `supabase/functions/create-reminders/index.ts` (turn_off message wording for iAquaLink homes)
+### Files
+
+**Create**: `supabase/functions/sync-pool-occupancy/index.ts`, migration
+**Edit**: `src/pages/admin/AdminIAquaLink.tsx`, `supabase/functions/iaqualink-control/index.ts` (add `save-hospitable-pat`, `test-hospitable-property` actions), `supabase/functions/process-reminders/index.ts` (write to `home_pool_state` after auto-sets)
 
 ### Open question
 
-The doc mentions session expiry — to re-login automatically when the cached session is invalid, the edge function needs the password. Confirm: **OK to store the iAquaLink email + password as Supabase secrets** (encrypted at rest, only accessible to your edge functions, never sent to the browser)?
+After you approve, I'll need to add the `HOSPITABLE_PAT` secret. **Please confirm:** you have access to create a Personal Access Token in your Hospitable account (Settings → Apps / API), and that's OK to store as a Supabase secret?
 
