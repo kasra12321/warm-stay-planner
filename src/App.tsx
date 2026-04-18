@@ -14,6 +14,7 @@ import AdminSchedule from "./pages/admin/AdminSchedule";
 import AdminHeatSettings from "./pages/admin/AdminHeatSettings";
 import AdminPaymentSettings from "./pages/admin/AdminPaymentSettings";
 import AdminNotificationSettings from "./pages/admin/AdminNotificationSettings";
+import AdminIAquaLink from "./pages/admin/AdminIAquaLink";
 
 const queryClient = new QueryClient();
 
