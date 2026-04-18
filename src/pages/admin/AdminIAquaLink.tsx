@@ -16,6 +16,7 @@ interface Home {
   iaqualink_serial: string | null;
   iaqualink_enabled: boolean;
   iaqualink_baseline_temp: number;
+  iaqualink_temp_sensor_index: number;
   hospitable_property_id: string | null;
   eco_mode_enabled: boolean;
   eco_temp: number;
@@ -88,7 +89,7 @@ const AdminIAquaLink = () => {
   const loadHomes = async () => {
     const { data, error } = await supabase
       .from('homes')
-      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp')
+      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp')
       .order('name');
     if (error) {
       toast({ title: 'Failed to load homes', description: error.message, variant: 'destructive' });
@@ -167,6 +168,7 @@ const AdminIAquaLink = () => {
         iaqualink_serial: home.iaqualink_serial,
         iaqualink_enabled: home.iaqualink_enabled,
         iaqualink_baseline_temp: home.iaqualink_baseline_temp,
+        iaqualink_temp_sensor_index: home.iaqualink_temp_sensor_index,
         hospitable_property_id: home.hospitable_property_id,
         eco_mode_enabled: home.eco_mode_enabled,
         eco_temp: home.eco_temp,
@@ -324,7 +326,7 @@ const AdminIAquaLink = () => {
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <Label className="text-xs text-muted-foreground">Device serial</Label>
                         {devices.length > 0 ? (
@@ -358,6 +360,21 @@ const AdminIAquaLink = () => {
                           value={home.iaqualink_baseline_temp}
                           onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
                         />
+                      </div>
+                      <div>
+                        <Label className="text-xs text-muted-foreground">Temperature setpoint</Label>
+                        <Select
+                          value={String(home.iaqualink_temp_sensor_index ?? 1)}
+                          onValueChange={(v) => updateHome(home.id, { iaqualink_temp_sensor_index: parseInt(v) })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="1">temp1 (pool — most common)</SelectItem>
+                            <SelectItem value="2">temp2 (spa / alt body)</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
 

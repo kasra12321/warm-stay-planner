@@ -96,6 +96,7 @@ export type Database = {
           iaqualink_baseline_temp: number
           iaqualink_enabled: boolean
           iaqualink_serial: string | null
+          iaqualink_temp_sensor_index: number
           id: string
           internal_name: string | null
           name: string
@@ -112,6 +113,7 @@ export type Database = {
           iaqualink_baseline_temp?: number
           iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
+          iaqualink_temp_sensor_index?: number
           id?: string
           internal_name?: string | null
           name: string
@@ -128,6 +130,7 @@ export type Database = {
           iaqualink_baseline_temp?: number
           iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
+          iaqualink_temp_sensor_index?: number
           id?: string
           internal_name?: string | null
           name?: string
