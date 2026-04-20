@@ -113,17 +113,64 @@ serve(async (req) => {
         const homeName = home.internal_name || home.name;
 
         if (state?.current_target_temp === decision.temp && state?.current_mode === decision.mode) {
-          // No change, just update sync metadata
-          await supabase
-            .from("home_pool_state")
-            .upsert({
+          // No decision change. Do a drift check: read the actual pool setpoint
+          // and compare to what we think it is. Re-applies + alerts if drifted.
+          let driftActual: number | null = null;
+          try {
+            const verify = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+              body: JSON.stringify({ action: "get-status", home_id: home.id }),
+            });
+            const vJson = await verify.json();
+            if (vJson?.success && vJson?.status) {
+              const candidates = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]];
+              for (const c of candidates) {
+                const n = parseInt(c, 10);
+                if (!isNaN(n) && n >= 50 && n <= 110) { driftActual = n; break; }
+              }
+            }
+          } catch (e) {
+            console.error("drift check failed", e);
+          }
+
+          if (driftActual !== null && driftActual !== decision.temp) {
+            // Drift detected — reapply and alert
+            const reapply = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
+              body: JSON.stringify({ action: "set-temp", home_id: home.id, temp: decision.temp }),
+            });
+            const rJson = await reapply.json();
+            const newActual = typeof rJson.actual_temp === "number" ? rJson.actual_temp : driftActual;
+            await supabase.from("home_pool_state").upsert({
               home_id: home.id,
               current_mode: decision.mode,
-              current_target_temp: decision.temp,
-              last_synced_at: state.last_synced_at,
+              current_target_temp: newActual,
+              last_synced_at: nowIso,
+              last_occupancy_check: nowIso,
+              next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              notes: rJson.verified
+                ? `${decision.reason} (drift corrected from ${driftActual}°F)`
+                : `${decision.reason} ⚠️ drift ${driftActual}°F, reapply unverified`,
+            }, { onConflict: "home_id" });
+            changes.push({
+              home: homeName,
+              from: `drift ${driftActual}°F`,
+              to: decision.mode,
+              temp: newActual,
+              reason: `drift corrected (was ${driftActual}, target ${decision.temp})`,
+            });
+          } else {
+            await supabase.from("home_pool_state").upsert({
+              home_id: home.id,
+              current_mode: decision.mode,
+              current_target_temp: driftActual ?? decision.temp,
+              last_synced_at: driftActual !== null ? nowIso : state.last_synced_at,
               last_occupancy_check: nowIso,
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
             }, { onConflict: "home_id" });
+          }
           continue;
         }
 
