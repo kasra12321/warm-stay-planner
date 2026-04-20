@@ -24,6 +24,8 @@ export interface GuestInfo {
   mobile: string;
 }
 
+export type PaymentMethod = 'venmo' | 'zelle' | 'apple_cash' | 'stripe';
+
 export interface OrderSummary {
   id: string;
   home: Home;
@@ -31,7 +33,7 @@ export interface OrderSummary {
   guestMobile: string;
   dates: SelectedDate[];
   total: number;
-  paymentMethod: 'venmo' | 'zelle' | 'stripe';
+  paymentMethod: PaymentMethod;
   status: string;
 }
 
@@ -42,6 +44,8 @@ export interface Settings {
   venmo_handle: string;
   venmo_instructions: string;
   zelle_instructions: string;
+  apple_cash_phone: string;
+  apple_cash_instructions: string;
   admin_sms_number: string;
   admin_email: string;
   admin_calendar_email: string;

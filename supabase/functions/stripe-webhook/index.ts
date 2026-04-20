@@ -70,6 +70,15 @@ serve(async (req) => {
         console.error("Reminder creation error:", e);
       }
 
+      // Notify admin (SMS + email)
+      try {
+        await supabase.functions.invoke("notify-admin-order", {
+          body: { orderId },
+        });
+      } catch (e) {
+        console.error("Admin notify error:", e);
+      }
+
       // Send guest SMS confirmation via Twilio connector
       try {
         const { data: settings } = await supabase.from("settings").select("*").single();
