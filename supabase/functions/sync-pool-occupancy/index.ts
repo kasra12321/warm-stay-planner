@@ -116,6 +116,7 @@ serve(async (req) => {
           // No decision change. Do a drift check: read the actual pool setpoint
           // and compare to what we think it is. Re-applies + alerts if drifted.
           let driftActual: number | null = null;
+          let controllerOffline = false;
           try {
             const verify = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
               method: "POST",
@@ -124,6 +125,9 @@ serve(async (req) => {
             });
             const vJson = await verify.json();
             if (vJson?.success && vJson?.status) {
+              if (vJson.status["status"] === "Offline" || vJson.status["response"] === "Error") {
+                controllerOffline = true;
+              }
               const candidates = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]];
               for (const c of candidates) {
                 const n = parseInt(c, 10);
@@ -132,6 +136,20 @@ serve(async (req) => {
             }
           } catch (e) {
             console.error("drift check failed", e);
+          }
+
+          if (controllerOffline) {
+            errors.push({ home: homeName, error: `🔌 Controller OFFLINE — pool may not match target ${decision.temp}°F` });
+            await supabase.from("home_pool_state").upsert({
+              home_id: home.id,
+              current_mode: decision.mode,
+              current_target_temp: state.current_target_temp,
+              last_synced_at: state.last_synced_at,
+              last_occupancy_check: nowIso,
+              next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              notes: `${decision.reason} 🔌 controller offline`,
+            }, { onConflict: "home_id" });
+            continue;
           }
 
           if (driftActual !== null && driftActual !== decision.temp) {
