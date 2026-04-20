@@ -34,7 +34,15 @@ const AdminOrders = () => {
                     <span className="font-semibold text-foreground">{order.guest_name}</span>
                     <span className="text-muted-foreground text-sm ml-2">{order.guest_mobile}</span>
                   </div>
-                  <Badge variant={order.status === 'stripe_paid' ? 'default' : 'secondary'} className="capitalize">
+                  <Badge
+                    variant={
+                      order.status === 'stripe_paid' ? 'default'
+                      : order.status === 'awaiting_confirmation' ? 'outline'
+                      : order.status === 'stripe_failed' ? 'destructive'
+                      : 'secondary'
+                    }
+                    className="capitalize"
+                  >
                     {order.status.replace(/_/g, ' ')}
                   </Badge>
                 </div>

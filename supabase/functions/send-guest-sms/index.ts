@@ -38,7 +38,13 @@ serve(async (req) => {
     if (!order.guest_mobile) throw new Error("No guest mobile number");
 
     const homeName = (order.homes as any)?.name || "your rental";
-    const paymentNote = order.payment_method === "venmo" ? "via Venmo" : "via Zelle";
+    const paymentLabelMap: Record<string, string> = {
+      venmo: "via Venmo",
+      zelle: "via Zelle",
+      apple_cash: "via Apple Cash",
+      stripe: "via card",
+    };
+    const paymentNote = paymentLabelMap[order.payment_method] || "";
     const body = `Pool Heat Checkout: Your pool heating at ${homeName} has been submitted ${paymentNote}. Total: $${order.total}. Order #${orderId.slice(0, 8)}`;
 
     const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
@@ -61,22 +67,7 @@ serve(async (req) => {
       throw new Error(`Twilio API error [${response.status}]: ${JSON.stringify(data)}`);
     }
 
-    // Also notify admin if configured
-    if (settings?.admin_sms_number) {
-      await fetch(`${GATEWAY_URL}/Messages.json`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${LOVABLE_API_KEY}`,
-          "X-Connection-Api-Key": TWILIO_API_KEY,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          To: settings.admin_sms_number,
-          From: settings.twilio_from_number,
-          Body: `New order from ${order.guest_name} at ${homeName} ${paymentNote}. Total: $${order.total}. Order #${orderId.slice(0, 8)}`,
-        }),
-      });
-    }
+    // Admin notifications now handled by notify-admin-order
 
     return new Response(JSON.stringify({ success: true, sid: data.sid }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
