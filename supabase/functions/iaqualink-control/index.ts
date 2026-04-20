@@ -256,17 +256,16 @@ serve(async (req) => {
           const homeScreen = (verify.body as any).home_screen || [];
           const flat: Record<string, string> = {};
           for (const row of homeScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
-          const setpointKey = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
-          // iAquaLink uses pool_set_point for temp1, spa_set_point for temp2 (panel-dependent).
-          // Try both and pick whichever parses to a sensible number.
-          const candidates = [flat["pool_set_point"], flat["spa_set_point"], flat[setpointKey]];
-          for (const c of candidates) {
-            const n = parseInt(c, 10);
-            if (!isNaN(n) && n >= 50 && n <= 110) {
-              actualTemp = n;
-              if (n === temp) verified = true;
-              break;
-            }
+          // Smart-match: panel field mapping (pool_set_point vs spa_set_point) varies per
+          // controller config. Consider verified if ANY setpoint field equals the target.
+          const candidates = [flat["pool_set_point"], flat["spa_set_point"]]
+            .map((c) => parseInt(c, 10))
+            .filter((n) => !isNaN(n) && n >= 50 && n <= 110);
+          if (candidates.includes(temp)) {
+            actualTemp = temp;
+            verified = true;
+          } else if (candidates.length > 0) {
+            actualTemp = candidates[0];
           }
         }
       } catch (e) {

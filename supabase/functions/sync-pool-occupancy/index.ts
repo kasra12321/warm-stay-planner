@@ -128,10 +128,15 @@ serve(async (req) => {
               if (vJson.status["status"] === "Offline" || vJson.status["response"] === "Error") {
                 controllerOffline = true;
               }
-              const candidates = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]];
-              for (const c of candidates) {
-                const n = parseInt(c, 10);
-                if (!isNaN(n) && n >= 50 && n <= 110) { driftActual = n; break; }
+              // Smart-match: if ANY setpoint field equals our target, we're in sync.
+              // Otherwise report the first valid reading as the actual.
+              const setpoints = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]]
+                .map((c) => parseInt(c, 10))
+                .filter((n) => !isNaN(n) && n >= 50 && n <= 110);
+              if (setpoints.includes(decision.temp)) {
+                driftActual = decision.temp;
+              } else if (setpoints.length > 0) {
+                driftActual = setpoints[0];
               }
             }
           } catch (e) {
