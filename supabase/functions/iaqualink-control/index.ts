@@ -245,9 +245,37 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      return new Response(JSON.stringify({ success: true, result: res.body }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // Verify: read pool back and compare actual setpoint to target
+      let actualTemp: number | null = null;
+      let verified = false;
+      try {
+        // Small delay so iAquaLink reflects the new value
+        await new Promise((r) => setTimeout(r, 2000));
+        const verify = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+        if (verify.status < 400) {
+          const homeScreen = (verify.body as any).home_screen || [];
+          const flat: Record<string, string> = {};
+          for (const row of homeScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+          const setpointKey = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
+          // iAquaLink uses pool_set_point for temp1, spa_set_point for temp2 (panel-dependent).
+          // Try both and pick whichever parses to a sensible number.
+          const candidates = [flat["pool_set_point"], flat["spa_set_point"], flat[setpointKey]];
+          for (const c of candidates) {
+            const n = parseInt(c, 10);
+            if (!isNaN(n) && n >= 50 && n <= 110) {
+              actualTemp = n;
+              if (n === temp) verified = true;
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.error("verify failed", e);
+      }
+      return new Response(
+        JSON.stringify({ success: true, result: res.body, verified, actual_temp: actualTemp, target_temp: temp }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
     if (action === "get-status") {
