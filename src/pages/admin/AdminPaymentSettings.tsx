@@ -22,12 +22,16 @@ const AdminPaymentSettings = () => {
   const [venmoHandle, setVenmoHandle] = useState('');
   const [venmoInstructions, setVenmoInstructions] = useState('');
   const [zelleInstructions, setZelleInstructions] = useState('');
+  const [appleCashPhone, setAppleCashPhone] = useState('');
+  const [appleCashInstructions, setAppleCashInstructions] = useState('');
 
   useEffect(() => {
     if (settings) {
       setVenmoHandle(settings.venmo_handle || '');
       setVenmoInstructions(settings.venmo_instructions || '');
       setZelleInstructions(settings.zelle_instructions || '');
+      setAppleCashPhone((settings as any).apple_cash_phone || '');
+      setAppleCashInstructions((settings as any).apple_cash_instructions || '');
     }
   }, [settings]);
 
@@ -38,6 +42,8 @@ const AdminPaymentSettings = () => {
         venmo_handle: venmoHandle,
         venmo_instructions: venmoInstructions,
         zelle_instructions: zelleInstructions,
+        apple_cash_phone: appleCashPhone,
+        apple_cash_instructions: appleCashInstructions,
       }).eq('id', settings.id);
       if (error) throw error;
     },
@@ -71,6 +77,20 @@ const AdminPaymentSettings = () => {
           <div className="space-y-1">
             <Label>Instructions</Label>
             <Textarea value={zelleInstructions} onChange={e => setZelleInstructions(e.target.value)} rows={3} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-lg">Apple Cash</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-1">
+            <Label>Apple Cash Phone Number</Label>
+            <Input value={appleCashPhone} onChange={e => setAppleCashPhone(e.target.value)} placeholder="+17144540453" />
+          </div>
+          <div className="space-y-1">
+            <Label>Instructions</Label>
+            <Textarea value={appleCashInstructions} onChange={e => setAppleCashInstructions(e.target.value)} rows={3} />
           </div>
         </CardContent>
       </Card>
