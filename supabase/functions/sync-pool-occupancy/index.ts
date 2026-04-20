@@ -142,24 +142,34 @@ serve(async (req) => {
           continue;
         }
 
+        // Use verified actual temp if available; flag mismatch
+        const actualTemp = typeof result.actual_temp === "number" ? result.actual_temp : decision.temp;
+        const verified = result.verified === true;
+        if (!verified) {
+          errors.push({
+            home: homeName,
+            error: `Set ${decision.temp}°F but pool reads ${result.actual_temp ?? "unknown"}°F (not verified)`,
+          });
+        }
+
         await supabase
           .from("home_pool_state")
           .upsert({
             home_id: home.id,
             current_mode: decision.mode,
-            current_target_temp: decision.temp,
+            current_target_temp: actualTemp,
             last_synced_at: nowIso,
             last_occupancy_check: nowIso,
             next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
-            notes: decision.reason,
+            notes: verified ? decision.reason : `${decision.reason} ⚠️ unverified`,
           }, { onConflict: "home_id" });
 
         changes.push({
           home: homeName,
           from: state?.current_mode || null,
           to: decision.mode,
-          temp: decision.temp,
-          reason: decision.reason,
+          temp: actualTemp,
+          reason: verified ? decision.reason : `${decision.reason} (target ${decision.temp}, actual ${actualTemp})`,
         });
       } catch (e: any) {
         errors.push({ home: home.internal_name || home.name, error: e.message });
