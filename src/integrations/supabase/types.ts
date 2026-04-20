@@ -331,6 +331,8 @@ export type Database = {
           admin_calendar_email: string | null
           admin_email: string | null
           admin_sms_number: string | null
+          apple_cash_instructions: string | null
+          apple_cash_phone: string | null
           created_at: string
           id: string
           twilio_from_number: string | null
@@ -343,6 +345,8 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          apple_cash_instructions?: string | null
+          apple_cash_phone?: string | null
           created_at?: string
           id?: string
           twilio_from_number?: string | null
@@ -355,6 +359,8 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          apple_cash_instructions?: string | null
+          apple_cash_phone?: string | null
           created_at?: string
           id?: string
           twilio_from_number?: string | null
@@ -410,7 +416,8 @@ export type Database = {
         | "stripe_pending"
         | "stripe_paid"
         | "stripe_failed"
-      payment_method: "venmo" | "zelle" | "stripe"
+        | "awaiting_confirmation"
+      payment_method: "venmo" | "zelle" | "stripe" | "apple_cash"
       reminder_action: "turn_on" | "change" | "turn_off"
     }
     CompositeTypes: {
@@ -546,8 +553,9 @@ export const Constants = {
         "stripe_pending",
         "stripe_paid",
         "stripe_failed",
+        "awaiting_confirmation",
       ],
-      payment_method: ["venmo", "zelle", "stripe"],
+      payment_method: ["venmo", "zelle", "stripe", "apple_cash"],
       reminder_action: ["turn_on", "change", "turn_off"],
     },
   },
