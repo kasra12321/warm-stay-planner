@@ -62,6 +62,14 @@ const Index = () => {
 
           checkout.setOrderSummary(summary);
           checkout.setStep('confirmation');
+
+          // Fire-and-forget finalize (idempotent) — ensures reminders/admin notify/SMS
+          // happen even if the Stripe webhook is disabled or failed.
+          if (order.status === 'stripe_paid') {
+            supabase.functions
+              .invoke('finalize-stripe-order', { body: { orderId } })
+              .catch((e) => console.error('finalize-stripe-order error:', e));
+          }
         } catch (e) {
           console.error('Failed to load order:', e);
         } finally {
