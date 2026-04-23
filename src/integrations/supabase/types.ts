@@ -203,34 +203,43 @@ export type Database = {
       }
       orders: {
         Row: {
+          admin_notified_at: string | null
           created_at: string
           guest_mobile: string
           guest_name: string
+          guest_sms_sent_at: string | null
           home_id: string
           id: string
           payment_method: Database["public"]["Enums"]["payment_method"]
+          reminders_created_at: string | null
           status: Database["public"]["Enums"]["order_status"]
           stripe_session_id: string | null
           total: number
         }
         Insert: {
+          admin_notified_at?: string | null
           created_at?: string
           guest_mobile: string
           guest_name: string
+          guest_sms_sent_at?: string | null
           home_id: string
           id?: string
           payment_method: Database["public"]["Enums"]["payment_method"]
+          reminders_created_at?: string | null
           status: Database["public"]["Enums"]["order_status"]
           stripe_session_id?: string | null
           total: number
         }
         Update: {
+          admin_notified_at?: string | null
           created_at?: string
           guest_mobile?: string
           guest_name?: string
+          guest_sms_sent_at?: string | null
           home_id?: string
           id?: string
           payment_method?: Database["public"]["Enums"]["payment_method"]
+          reminders_created_at?: string | null
           status?: Database["public"]["Enums"]["order_status"]
           stripe_session_id?: string | null
           total?: number
