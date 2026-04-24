@@ -28,7 +28,75 @@ async function fetchReservations(propertyId: string, pat: string): Promise<Reser
     throw new Error(`Hospitable ${r.status}: ${t}`);
   }
   const data = await r.json();
-  return (data.data || []).filter((res: any) => res.status === "accepted");
+  const otaReservations: Reservation[] = (data.data || [])
+    .filter((res: any) => res.status === "accepted")
+    .map((res: any) => ({
+      check_in: res.check_in,
+      check_out: res.check_out,
+      status: res.status,
+    }));
+
+  // The /v2/reservations endpoint does NOT include direct/manual bookings (HOST-*).
+  // Pull the calendar to capture ALL blocked days regardless of source (direct, OTA, owner stay, manual block),
+  // then synthesize Reservation entries for any contiguous RESERVED/UNAVAILABLE range not already covered.
+  try {
+    const calUrl = `https://public.api.hospitable.com/v2/properties/${encodeURIComponent(
+      propertyId,
+    )}/calendar?start_date=${start}&end_date=${end}`;
+    const cr = await fetch(calUrl, {
+      headers: { Authorization: `Bearer ${pat}`, Accept: "application/json" },
+    });
+    if (cr.ok) {
+      const cdata = await cr.json();
+      const days: Array<{ date: string; status?: { available?: boolean; reason?: string } }> =
+        cdata?.data?.days || [];
+      const blocked = days
+        .filter((d) => d?.status && d.status.available === false)
+        .map((d) => d.date)
+        .sort();
+
+      // Group contiguous blocked dates into ranges
+      const ranges: Array<{ start: string; endExclusive: string }> = [];
+      for (const date of blocked) {
+        const last = ranges[ranges.length - 1];
+        if (last && last.endExclusive === date) {
+          // extend
+          const next = new Date(date + "T00:00:00Z");
+          next.setUTCDate(next.getUTCDate() + 1);
+          last.endExclusive = next.toISOString().slice(0, 10);
+        } else {
+          const next = new Date(date + "T00:00:00Z");
+          next.setUTCDate(next.getUTCDate() + 1);
+          ranges.push({ start: date, endExclusive: next.toISOString().slice(0, 10) });
+        }
+      }
+
+      // Add a synthesized reservation for any range not already overlapped by an OTA reservation.
+      // Use 16:00 local-ish (4pm) check-in and 11:00 checkout to mirror typical Hospitable rules.
+      for (const range of ranges) {
+        const rangeStart = new Date(range.start + "T16:00:00Z").getTime();
+        const rangeEnd = new Date(range.endExclusive + "T11:00:00Z").getTime();
+        const overlaps = otaReservations.some((r) => {
+          const ci = new Date(r.check_in).getTime();
+          const co = new Date(r.check_out).getTime();
+          return ci < rangeEnd && co > rangeStart;
+        });
+        if (!overlaps) {
+          otaReservations.push({
+            check_in: `${range.start}T16:00:00Z`,
+            check_out: `${range.endExclusive}T11:00:00Z`,
+            status: "accepted",
+          });
+        }
+      }
+    } else {
+      console.warn(`Calendar fetch failed for ${propertyId}: ${cr.status}`);
+    }
+  } catch (e) {
+    console.error(`Calendar fetch error for ${propertyId}:`, e);
+  }
+
+  return otaReservations;
 }
 
 function decideTemp(
