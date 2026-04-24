@@ -50,44 +50,50 @@ async function fetchReservations(propertyId: string, pat: string): Promise<Reser
       const cdata = await cr.json();
       const days: Array<{ date: string; status?: { available?: boolean; reason?: string } }> =
         cdata?.data?.days || [];
-      const blocked = days
-        .filter((d) => d?.status && d.status.available === false)
-        .map((d) => d.date)
-        .sort();
+      const blocked = new Set(
+        days
+          .filter((d) => d?.status && d.status.available === false)
+          .map((d) => d.date),
+      );
 
-      // Group contiguous blocked dates into ranges
-      const ranges: Array<{ start: string; endExclusive: string }> = [];
-      for (const date of blocked) {
-        const last = ranges[ranges.length - 1];
-        if (last && last.endExclusive === date) {
-          // extend
-          const next = new Date(date + "T00:00:00Z");
-          next.setUTCDate(next.getUTCDate() + 1);
-          last.endExclusive = next.toISOString().slice(0, 10);
-        } else {
-          const next = new Date(date + "T00:00:00Z");
-          next.setUTCDate(next.getUTCDate() + 1);
-          ranges.push({ start: date, endExclusive: next.toISOString().slice(0, 10) });
+      // Determine which blocked days are NOT already covered by an OTA reservation.
+      // (OTA reservations cover [check_in date .. check_out date - 1].)
+      const otaCoveredDays = new Set<string>();
+      for (const r of otaReservations) {
+        const ci = new Date(r.check_in);
+        const co = new Date(r.check_out);
+        const cur = new Date(Date.UTC(ci.getUTCFullYear(), ci.getUTCMonth(), ci.getUTCDate()));
+        const last = new Date(Date.UTC(co.getUTCFullYear(), co.getUTCMonth(), co.getUTCDate()));
+        while (cur < last) {
+          otaCoveredDays.add(cur.toISOString().slice(0, 10));
+          cur.setUTCDate(cur.getUTCDate() + 1);
         }
       }
 
-      // Add a synthesized reservation for any range not already overlapped by an OTA reservation.
-      // Use 16:00 local-ish (4pm) check-in and 11:00 checkout to mirror typical Hospitable rules.
-      for (const range of ranges) {
-        const rangeStart = new Date(range.start + "T16:00:00Z").getTime();
-        const rangeEnd = new Date(range.endExclusive + "T11:00:00Z").getTime();
-        const overlaps = otaReservations.some((r) => {
-          const ci = new Date(r.check_in).getTime();
-          const co = new Date(r.check_out).getTime();
-          return ci < rangeEnd && co > rangeStart;
-        });
-        if (!overlaps) {
-          otaReservations.push({
-            check_in: `${range.start}T16:00:00Z`,
-            check_out: `${range.endExclusive}T11:00:00Z`,
-            status: "accepted",
-          });
+      const uncovered = [...blocked].filter((d) => !otaCoveredDays.has(d)).sort();
+
+      // Group contiguous uncovered dates into ranges and synthesize a reservation per range.
+      // Use 4pm local (assume UTC-7 PT) → 23:00 UTC check-in, 11am local → 18:00 UTC checkout
+      // for a closer match to typical Hospitable check-in times.
+      const ranges: Array<{ start: string; endExclusive: string }> = [];
+      for (const date of uncovered) {
+        const last = ranges[ranges.length - 1];
+        const nextDate = new Date(date + "T00:00:00Z");
+        nextDate.setUTCDate(nextDate.getUTCDate() + 1);
+        const nextStr = nextDate.toISOString().slice(0, 10);
+        if (last && last.endExclusive === date) {
+          last.endExclusive = nextStr;
+        } else {
+          ranges.push({ start: date, endExclusive: nextStr });
         }
+      }
+
+      for (const range of ranges) {
+        otaReservations.push({
+          check_in: `${range.start}T23:00:00Z`,
+          check_out: `${range.endExclusive}T18:00:00Z`,
+          status: "accepted",
+        });
       }
     } else {
       console.warn(`Calendar fetch failed for ${propertyId}: ${cr.status}`);
