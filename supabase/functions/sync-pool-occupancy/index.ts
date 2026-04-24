@@ -144,7 +144,8 @@ serve(async (req) => {
           }
 
           if (controllerOffline) {
-            errors.push({ home: homeName, error: `🔌 Controller OFFLINE — pool may not match target ${decision.temp}°F` });
+            // No temperature change needed right now — silently record offline status
+            // without alerting. We only alert on offline when we actually try to set a temp.
             await supabase.from("home_pool_state").upsert({
               home_id: home.id,
               current_mode: decision.mode,
