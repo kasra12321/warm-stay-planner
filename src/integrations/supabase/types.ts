@@ -88,6 +88,7 @@ export type Database = {
       homes: {
         Row: {
           active: boolean
+          controller_type: string
           cover_photo_url: string | null
           created_at: string
           eco_mode_enabled: boolean
@@ -100,11 +101,14 @@ export type Database = {
           id: string
           internal_name: string | null
           name: string
+          screenlogic_password: string | null
+          screenlogic_system_name: string | null
           slug: string
           updated_at: string
         }
         Insert: {
           active?: boolean
+          controller_type?: string
           cover_photo_url?: string | null
           created_at?: string
           eco_mode_enabled?: boolean
@@ -117,11 +121,14 @@ export type Database = {
           id?: string
           internal_name?: string | null
           name: string
+          screenlogic_password?: string | null
+          screenlogic_system_name?: string | null
           slug: string
           updated_at?: string
         }
         Update: {
           active?: boolean
+          controller_type?: string
           cover_photo_url?: string | null
           created_at?: string
           eco_mode_enabled?: boolean
@@ -134,6 +141,8 @@ export type Database = {
           id?: string
           internal_name?: string | null
           name?: string
+          screenlogic_password?: string | null
+          screenlogic_system_name?: string | null
           slug?: string
           updated_at?: string
         }
