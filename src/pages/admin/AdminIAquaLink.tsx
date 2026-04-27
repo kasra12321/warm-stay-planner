@@ -20,6 +20,9 @@ interface Home {
   hospitable_property_id: string | null;
   eco_mode_enabled: boolean;
   eco_temp: number;
+  controller_type: 'iaqualink' | 'screenlogic';
+  screenlogic_system_name: string | null;
+  screenlogic_password: string | null;
 }
 
 interface Device {
@@ -89,7 +92,7 @@ const AdminIAquaLink = () => {
   const loadHomes = async () => {
     const { data, error } = await supabase
       .from('homes')
-      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp')
+      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name, screenlogic_password')
       .order('name');
     if (error) {
       toast({ title: 'Failed to load homes', description: error.message, variant: 'destructive' });
@@ -172,6 +175,9 @@ const AdminIAquaLink = () => {
         hospitable_property_id: home.hospitable_property_id,
         eco_mode_enabled: home.eco_mode_enabled,
         eco_temp: home.eco_temp,
+        controller_type: home.controller_type,
+        screenlogic_system_name: home.screenlogic_system_name,
+        screenlogic_password: home.screenlogic_password,
       })
       .eq('id', home.id);
     setSavingHomeId(null);
@@ -185,7 +191,14 @@ const AdminIAquaLink = () => {
   const testHome = async (home: Home) => {
     setTestingHomeId(home.id);
     try {
-      const res = await callFn('get-status', { home_id: home.id });
+      // Route to the home's configured controller
+      const fnName = home.controller_type === 'screenlogic' ? 'screenlogic-control' : 'iaqualink-control';
+      const { data, error } = await supabase.functions.invoke(fnName, {
+        body: { action: 'get-status', home_id: home.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const res = data;
       setTestResults((prev) => ({ ...prev, [home.id]: res.status }));
       toast({ title: 'Test successful' });
     } catch (e: any) {
