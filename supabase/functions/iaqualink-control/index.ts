@@ -256,16 +256,29 @@ serve(async (req) => {
           const homeScreen = (verify.body as any).home_screen || [];
           const flat: Record<string, string> = {};
           for (const row of homeScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
-          // Smart-match: panel field mapping (pool_set_point vs spa_set_point) varies per
-          // controller config. Consider verified if ANY setpoint field equals the target.
-          const candidates = [flat["pool_set_point"], flat["spa_set_point"]]
-            .map((c) => parseInt(c, 10))
-            .filter((n) => !isNaN(n) && n >= 50 && n <= 110);
-          if (candidates.includes(temp)) {
-            actualTemp = temp;
+          // tempIndex maps to a specific setpoint field on the panel:
+          //   index 1 -> temp1 -> spa_set_point (on dual pool/spa controllers)
+          //                       or pool_set_point (on pool-only controllers)
+          //   index 2 -> temp2 -> pool_set_point (on dual pool/spa controllers)
+          // We verify against the field that matches the index we actually wrote to,
+          // so a misconfigured index surfaces as "not verified" instead of silently
+          // landing on the wrong setpoint.
+          const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
+          const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
+          const primaryVal = parseInt(flat[primaryField], 10);
+          const fallbackVal = parseInt(flat[fallbackField], 10);
+          // Pool-only controllers report only pool_set_point even when index=1, so
+          // accept the fallback when the primary field is empty/NaN.
+          if (!isNaN(primaryVal) && primaryVal === temp) {
+            actualTemp = primaryVal;
             verified = true;
-          } else if (candidates.length > 0) {
-            actualTemp = candidates[0];
+          } else if (isNaN(primaryVal) && !isNaN(fallbackVal) && fallbackVal === temp) {
+            actualTemp = fallbackVal;
+            verified = true;
+          } else if (!isNaN(primaryVal)) {
+            actualTemp = primaryVal;
+          } else if (!isNaN(fallbackVal)) {
+            actualTemp = fallbackVal;
           }
         }
       } catch (e) {
