@@ -1,0 +1,1 @@
+UPDATE public.homes SET iaqualink_temp_sensor_index = 2 WHERE internal_name IN ('Willow','Holder');
