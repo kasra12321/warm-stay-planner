@@ -475,7 +475,12 @@ const AdminIAquaLink = () => {
                         size="sm"
                         variant="outline"
                         onClick={() => testHome(home)}
-                        disabled={testingHomeId === home.id || !home.iaqualink_serial || !connected}
+                        disabled={
+                          testingHomeId === home.id ||
+                          (home.controller_type === 'screenlogic'
+                            ? !home.screenlogic_system_name || !home.screenlogic_password
+                            : !home.iaqualink_serial || !connected)
+                        }
                       >
                         {testingHomeId === home.id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
                         Test pool
