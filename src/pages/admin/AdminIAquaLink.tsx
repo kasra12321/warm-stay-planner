@@ -478,7 +478,7 @@ const AdminIAquaLink = () => {
                         disabled={
                           testingHomeId === home.id ||
                           (home.controller_type === 'screenlogic'
-                            ? !home.screenlogic_system_name || !home.screenlogic_password
+                            ? !home.screenlogic_system_name
                             : !home.iaqualink_serial || !connected)
                         }
                       >
