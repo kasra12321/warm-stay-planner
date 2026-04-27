@@ -339,6 +339,51 @@ const AdminIAquaLink = () => {
                       </div>
                     </div>
 
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Controller type</Label>
+                      <Select
+                        value={home.controller_type || 'iaqualink'}
+                        onValueChange={(v) => updateHome(home.id, { controller_type: v as 'iaqualink' | 'screenlogic' })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="iaqualink">iAquaLink (Jandy)</SelectItem>
+                          <SelectItem value="screenlogic">ScreenLogic (Pentair, via Pi)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {home.controller_type === 'screenlogic' ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">ScreenLogic system name</Label>
+                          <Input
+                            placeholder="Pentair: 12-AB-CD"
+                            value={home.screenlogic_system_name || ''}
+                            onChange={(e) => updateHome(home.id, { screenlogic_system_name: e.target.value || null })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">ScreenLogic password</Label>
+                          <Input
+                            type="password"
+                            placeholder="Adapter password"
+                            value={home.screenlogic_password || ''}
+                            onChange={(e) => updateHome(home.id, { screenlogic_password: e.target.value || null })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Baseline temp (°F)</Label>
+                          <Input
+                            type="number"
+                            value={home.iaqualink_baseline_temp}
+                            onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
+                          />
+                        </div>
+                      </div>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <Label className="text-xs text-muted-foreground">Device serial</Label>
@@ -390,6 +435,7 @@ const AdminIAquaLink = () => {
                         </Select>
                       </div>
                     </div>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t pt-3">
                       <div className="md:col-span-2">
