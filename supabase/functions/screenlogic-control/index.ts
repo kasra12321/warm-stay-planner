@@ -132,16 +132,16 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    if (!home.screenlogic_system_name || !home.screenlogic_password) {
+    if (!home.screenlogic_system_name) {
       return new Response(
-        JSON.stringify({ error: "Home is missing ScreenLogic system name or password" }),
+        JSON.stringify({ error: "Home is missing ScreenLogic system name" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
     }
 
     const credentials = {
       systemName: home.screenlogic_system_name,
-      password: home.screenlogic_password,
+      password: home.screenlogic_password ?? "",
     };
 
     if (action === "get-status") {
