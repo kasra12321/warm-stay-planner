@@ -152,9 +152,8 @@ serve(async (req) => {
 
     const { data: homes, error } = await supabase
       .from("homes")
-      .select("id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp")
+      .select("id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name")
       .eq("iaqualink_enabled", true)
-      .not("iaqualink_serial", "is", null)
       .not("hospitable_property_id", "is", null);
     if (error) throw error;
 
@@ -164,6 +163,14 @@ serve(async (req) => {
 
     for (const home of homes || []) {
       try {
+        // Dispatch the right controller. iAquaLink homes still need a serial;
+        // ScreenLogic homes need a system name. Skip homes that have neither so
+        // the sync only acts on fully-configured properties.
+        const controllerType = (home as any).controller_type || "iaqualink";
+        const controlFn = controllerType === "screenlogic" ? "screenlogic-control" : "iaqualink-control";
+        if (controllerType === "iaqualink" && !home.iaqualink_serial) continue;
+        if (controllerType === "screenlogic" && !(home as any).screenlogic_system_name) continue;
+
         const { data: state } = await supabase
           .from("home_pool_state")
           .select("*")
@@ -192,7 +199,7 @@ serve(async (req) => {
           let driftActual: number | null = null;
           let controllerOffline = false;
           try {
-            const verify = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+            const verify = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
               body: JSON.stringify({ action: "get-status", home_id: home.id }),
@@ -234,7 +241,7 @@ serve(async (req) => {
 
           if (driftActual !== null && driftActual !== decision.temp) {
             // Drift detected — reapply and alert
-            const reapply = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+            const reapply = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
               body: JSON.stringify({ action: "set-temp", home_id: home.id, temp: decision.temp }),
@@ -273,7 +280,8 @@ serve(async (req) => {
         }
 
         // Apply change via iaqualink-control
-        const resp = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+        // Apply change via the home's configured controller
+        const resp = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

@@ -21,7 +21,7 @@ serve(async (req) => {
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase
       .from("reminders")
-      .select("*, homes(name, internal_name, iaqualink_enabled, iaqualink_serial, iaqualink_baseline_temp)")
+      .select("*, homes(name, internal_name, iaqualink_enabled, iaqualink_serial, iaqualink_baseline_temp, controller_type, screenlogic_system_name)")
       .eq("sent", false)
       .lte("scheduled_at", now)
       .order("scheduled_at")
@@ -46,7 +46,18 @@ serve(async (req) => {
         let autoResult: string | null = null;
         let autoStatusLine = "";
 
-        if (home?.iaqualink_enabled && home?.iaqualink_serial) {
+        // Auto-execute via whichever controller this home is configured for.
+        // `iaqualink_enabled` doubles as the "auto-control enabled" flag for both
+        // controllers; the controller_type column picks which edge function to call.
+        const controllerType = home?.controller_type || "iaqualink";
+        const controlFn =
+          controllerType === "screenlogic" ? "screenlogic-control" : "iaqualink-control";
+        const hasController =
+          controllerType === "screenlogic"
+            ? !!home?.screenlogic_system_name
+            : !!home?.iaqualink_serial;
+
+        if (home?.iaqualink_enabled && hasController) {
           let targetTemp: number | null = null;
           if (reminder.action_type === "turn_on" || reminder.action_type === "change") {
             targetTemp = reminder.target_temperature;
@@ -56,7 +67,7 @@ serve(async (req) => {
 
           if (targetTemp !== null) {
             try {
-              const resp = await fetch(`${supabaseUrl}/functions/v1/iaqualink-control`, {
+              const resp = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",

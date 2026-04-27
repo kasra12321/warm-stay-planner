@@ -1,0 +1,17 @@
+{
+  "name": "poolheat-pi-server",
+  "version": "1.0.0",
+  "description": "Residential-IP bridge between the Lovable cloud backend and Pentair ScreenLogic remote adapters.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-screenlogic": "^2.1.1"
+  }
+}

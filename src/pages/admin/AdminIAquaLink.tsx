@@ -20,6 +20,9 @@ interface Home {
   hospitable_property_id: string | null;
   eco_mode_enabled: boolean;
   eco_temp: number;
+  controller_type: 'iaqualink' | 'screenlogic';
+  screenlogic_system_name: string | null;
+  screenlogic_password: string | null;
 }
 
 interface Device {
@@ -89,7 +92,7 @@ const AdminIAquaLink = () => {
   const loadHomes = async () => {
     const { data, error } = await supabase
       .from('homes')
-      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp')
+      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name, screenlogic_password')
       .order('name');
     if (error) {
       toast({ title: 'Failed to load homes', description: error.message, variant: 'destructive' });
@@ -172,6 +175,9 @@ const AdminIAquaLink = () => {
         hospitable_property_id: home.hospitable_property_id,
         eco_mode_enabled: home.eco_mode_enabled,
         eco_temp: home.eco_temp,
+        controller_type: home.controller_type,
+        screenlogic_system_name: home.screenlogic_system_name,
+        screenlogic_password: home.screenlogic_password,
       })
       .eq('id', home.id);
     setSavingHomeId(null);
@@ -185,7 +191,14 @@ const AdminIAquaLink = () => {
   const testHome = async (home: Home) => {
     setTestingHomeId(home.id);
     try {
-      const res = await callFn('get-status', { home_id: home.id });
+      // Route to the home's configured controller
+      const fnName = home.controller_type === 'screenlogic' ? 'screenlogic-control' : 'iaqualink-control';
+      const { data, error } = await supabase.functions.invoke(fnName, {
+        body: { action: 'get-status', home_id: home.id },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const res = data;
       setTestResults((prev) => ({ ...prev, [home.id]: res.status }));
       toast({ title: 'Test successful' });
     } catch (e: any) {
@@ -326,6 +339,51 @@ const AdminIAquaLink = () => {
                       </div>
                     </div>
 
+                    <div>
+                      <Label className="text-xs text-muted-foreground">Controller type</Label>
+                      <Select
+                        value={home.controller_type || 'iaqualink'}
+                        onValueChange={(v) => updateHome(home.id, { controller_type: v as 'iaqualink' | 'screenlogic' })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="iaqualink">iAquaLink (Jandy)</SelectItem>
+                          <SelectItem value="screenlogic">ScreenLogic (Pentair, via Pi)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {home.controller_type === 'screenlogic' ? (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div>
+                          <Label className="text-xs text-muted-foreground">ScreenLogic system name</Label>
+                          <Input
+                            placeholder="Pentair: 12-AB-CD"
+                            value={home.screenlogic_system_name || ''}
+                            onChange={(e) => updateHome(home.id, { screenlogic_system_name: e.target.value || null })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">ScreenLogic password</Label>
+                          <Input
+                            type="password"
+                            placeholder="Adapter password"
+                            value={home.screenlogic_password || ''}
+                            onChange={(e) => updateHome(home.id, { screenlogic_password: e.target.value || null })}
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-xs text-muted-foreground">Baseline temp (°F)</Label>
+                          <Input
+                            type="number"
+                            value={home.iaqualink_baseline_temp}
+                            onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
+                          />
+                        </div>
+                      </div>
+                    ) : (
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div>
                         <Label className="text-xs text-muted-foreground">Device serial</Label>
@@ -377,6 +435,7 @@ const AdminIAquaLink = () => {
                         </Select>
                       </div>
                     </div>
+                    )}
 
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 border-t pt-3">
                       <div className="md:col-span-2">
@@ -416,7 +475,12 @@ const AdminIAquaLink = () => {
                         size="sm"
                         variant="outline"
                         onClick={() => testHome(home)}
-                        disabled={testingHomeId === home.id || !home.iaqualink_serial || !connected}
+                        disabled={
+                          testingHomeId === home.id ||
+                          (home.controller_type === 'screenlogic'
+                            ? !home.screenlogic_system_name || !home.screenlogic_password
+                            : !home.iaqualink_serial || !connected)
+                        }
                       >
                         {testingHomeId === home.id ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
                         Test pool
