@@ -43,6 +43,7 @@ export type Database = {
           created_at: string
           current_mode: string
           current_target_temp: number | null
+          eco_paused_until: string | null
           home_id: string
           id: string
           last_occupancy_check: string | null
@@ -55,6 +56,7 @@ export type Database = {
           created_at?: string
           current_mode?: string
           current_target_temp?: number | null
+          eco_paused_until?: string | null
           home_id: string
           id?: string
           last_occupancy_check?: string | null
@@ -67,6 +69,7 @@ export type Database = {
           created_at?: string
           current_mode?: string
           current_target_temp?: number | null
+          eco_paused_until?: string | null
           home_id?: string
           id?: string
           last_occupancy_check?: string | null
