@@ -1,0 +1,1 @@
+UPDATE public.orders SET status = 'apple_cash_submitted' WHERE id = '34273f9f-be33-4a90-91a7-8e341211fb2c' AND status = 'awaiting_confirmation';
