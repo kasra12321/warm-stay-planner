@@ -341,6 +341,7 @@ serve(async (req) => {
             last_synced_at: state?.last_synced_at ?? null,
             last_occupancy_check: nowIso,
             next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+            eco_paused_until: nextEcoPausedUntil,
             notes: `${decision.reason} ⚠️ ${result.error || `HTTP ${resp.status}`}`.slice(0, 500),
           }, { onConflict: "home_id" });
           continue;
@@ -365,6 +366,7 @@ serve(async (req) => {
             last_synced_at: nowIso,
             last_occupancy_check: nowIso,
             next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+            eco_paused_until: nextEcoPausedUntil,
             notes: verified ? decision.reason : `${decision.reason} ⚠️ unverified`,
           }, { onConflict: "home_id" });
 
