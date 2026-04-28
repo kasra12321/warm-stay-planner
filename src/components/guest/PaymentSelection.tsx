@@ -28,7 +28,17 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
     setLoading(paymentMethod);
 
     try {
-      const status = paymentMethod === 'stripe' ? 'stripe_pending' : 'awaiting_confirmation';
+      // Manual payment methods are trusted at creation time — no separate
+      // "awaiting_confirmation" step. Only Stripe gets validated downstream.
+      const MANUAL_STATUS = {
+        venmo: 'venmo_submitted',
+        zelle: 'zelle_submitted',
+        apple_cash: 'apple_cash_submitted',
+      } as const;
+      const status =
+        paymentMethod === 'stripe'
+          ? 'stripe_pending'
+          : MANUAL_STATUS[paymentMethod];
       const orderData = {
         home_id: home.id,
         guest_name: guestInfo.name,
@@ -65,7 +75,14 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         return;
       }
 
-      // Manual payment: show instructions, defer reminders/SMS/admin notify until "I've paid"
+      // Manual payment: order is already marked submitted/paid. Fire admin
+      // notify + reminders + guest SMS now so the host knows even if the
+      // guest closes the instructions screen without tapping "I've paid".
+      void Promise.allSettled([
+        supabase.functions.invoke('notify-admin-order', { body: { orderId: order.id } }),
+        supabase.functions.invoke('create-reminders', { body: { orderId: order.id } }),
+        supabase.functions.invoke('send-guest-sms', { body: { orderId: order.id } }),
+      ]);
       setPendingManual({ orderId: order.id, method: paymentMethod });
     } catch (error) {
       console.error('Order creation failed:', error);
