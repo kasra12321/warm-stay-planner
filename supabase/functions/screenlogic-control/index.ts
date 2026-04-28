@@ -80,7 +80,11 @@ function classifyPiError(status: number, rawText: string, parsed: any): {
   if (looksHtml) {
     return {
       kind: "tunnel_down",
-      message: "Raspberry Pi bridge is unreachable (Cloudflare tunnel up but poolheat service is not responding). On the Pi run: sudo systemctl restart poolheat",
+      message:
+        "Cloudflare returned an HTML error page (no JSON from poolheat). " +
+        "/healthz works but /api/pool/* does not — likely a Cloudflare Tunnel " +
+        "ingress path restriction or the route is crashing. On the Pi check: " +
+        "`sudo journalctl -u poolheat -n 50` and your `cloudflared` ingress config.",
     };
   }
   const piMsg = parsed?.error || parsed?.message || rawText || `HTTP ${status}`;
