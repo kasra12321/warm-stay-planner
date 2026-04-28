@@ -35,6 +35,55 @@ interface PiStatus {
   response?: string;
 }
 
+/**
+ * Normalize a ScreenLogic system name to the form Pentair's dispatcher expects:
+ *   "Pentair: XX-XX-XX"
+ * Accepts the raw 6-hex code (e.g. "0CB6F9"), dashed form ("0C-B6-F9"),
+ * the full prefixed form, lowercase, with stray spaces, or with letter O
+ * mistakenly typed in place of zero. Returns null if it can't be coerced
+ * into a valid 6-hex identifier.
+ */
+function normalizeSystemName(input: string | null | undefined): string | null {
+  if (!input) return null;
+  let s = String(input).trim();
+  // Strip a leading "Pentair:" (any casing/spacing) if present
+  s = s.replace(/^pentair\s*:\s*/i, "");
+  // Common typo: capital O instead of zero
+  s = s.replace(/O/gi, "0");
+  // Remove anything that's not hex
+  const hex = s.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  if (hex.length !== 6) return null;
+  return `Pentair: ${hex.slice(0, 2)}-${hex.slice(2, 4)}-${hex.slice(4, 6)}`;
+}
+
+/**
+ * Classify an error coming back from the Pi call so the UI can show a
+ * meaningful message instead of a raw stack trace.
+ *
+ *  - tunnel_down  → Cloudflare returned HTML (Pi service offline)
+ *  - unauthorized → Pi rejected our bearer token
+ *  - screenlogic  → Pi reached Pentair but Pentair / adapter errored
+ *  - timeout      → fetch aborted
+ *  - unknown      → fallback
+ */
+function classifyPiError(status: number, rawText: string, parsed: any): {
+  kind: "tunnel_down" | "unauthorized" | "screenlogic" | "timeout" | "unknown";
+  message: string;
+} {
+  const looksHtml = /^\s*<(?:!doctype|html)/i.test(rawText || "");
+  if (status === 401 || status === 403) {
+    return { kind: "unauthorized", message: "Pi rejected the auth token. Verify SCREENLOGIC_PI_AUTH_TOKEN matches the Pi's /etc/poolheat.env." };
+  }
+  if (looksHtml || status === 502 || status === 503 || status === 504) {
+    return {
+      kind: "tunnel_down",
+      message: "Raspberry Pi bridge is unreachable (Cloudflare tunnel up but poolheat service is not responding). On the Pi run: sudo systemctl restart poolheat",
+    };
+  }
+  const piMsg = parsed?.error || rawText || "unknown error";
+  return { kind: "screenlogic", message: `ScreenLogic error: ${piMsg}` };
+}
+
 async function callPi(
   path: string,
   body: Record<string, unknown> | null,
@@ -42,16 +91,28 @@ async function callPi(
   piToken: string,
 ) {
   const url = `${piUrl.replace(/\/$/, "")}${path}`;
-  const r = await fetch(url, {
-    method: body ? "POST" : "GET",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${piToken}`,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-    // Pi over Cloudflare Tunnel can be slow on cold connect (RemoteLogin handshake)
-    signal: AbortSignal.timeout(30_000),
-  });
+  let r: Response;
+  try {
+    r = await fetch(url, {
+      method: body ? "POST" : "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${piToken}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      // Pi over Cloudflare Tunnel can be slow on cold connect (RemoteLogin handshake)
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (e: any) {
+    if (e?.name === "TimeoutError" || e?.name === "AbortError") {
+      const err: any = new Error("Timed out waiting for the Raspberry Pi bridge (30s). The Pi may be offline or the Pentair handshake is hung.");
+      err.kind = "timeout";
+      throw err;
+    }
+    const err: any = new Error(`Cannot reach Raspberry Pi bridge at ${piUrl}: ${e?.message || e}`);
+    err.kind = "tunnel_down";
+    throw err;
+  }
   const text = await r.text();
   let json: any = null;
   try {
@@ -60,7 +121,11 @@ async function callPi(
     // leave as null, surface raw text in error
   }
   if (!r.ok) {
-    throw new Error(`Pi ${path} ${r.status}: ${json?.error || text || "unknown"}`);
+    const { kind, message } = classifyPiError(r.status, text, json);
+    const err: any = new Error(message);
+    err.kind = kind;
+    err.status = r.status;
+    throw err;
   }
   return json;
 }
@@ -139,8 +204,18 @@ serve(async (req) => {
       );
     }
 
+    const normalizedSystemName = normalizeSystemName(home.screenlogic_system_name);
+    if (!normalizedSystemName) {
+      return new Response(
+        JSON.stringify({
+          error: `Invalid ScreenLogic system name "${home.screenlogic_system_name}". Expected a 6-character hex code like "0C-B6-F9" or "Pentair: 0C-B6-F9".`,
+        }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
     const credentials = {
-      systemName: home.screenlogic_system_name,
+      systemName: normalizedSystemName,
       password: home.screenlogic_password ?? "",
     };
 
@@ -157,7 +232,12 @@ serve(async (req) => {
         return new Response(
           JSON.stringify({
             success: true,
-            status: { status: "Offline", response: "Error", error: e.message },
+            status: {
+              status: "Offline",
+              response: "Error",
+              error: e.message,
+              error_kind: e.kind || "unknown",
+            },
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
@@ -172,19 +252,26 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const result = await callPi(
-        "/api/pool/heater",
-        { ...credentials, temp },
-        piUrl!,
-        piToken!,
-      );
+      try {
+        const result = await callPi(
+          "/api/pool/heater",
+          { ...credentials, temp },
+          piUrl!,
+          piToken!,
+        );
       // Pi returns { success, actual_temp, verified }
-      const actual_temp = typeof result?.actual_temp === "number" ? result.actual_temp : temp;
-      const verified = result?.verified === true;
-      return new Response(
-        JSON.stringify({ success: true, actual_temp, verified, raw: result }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+        const actual_temp = typeof result?.actual_temp === "number" ? result.actual_temp : temp;
+        const verified = result?.verified === true;
+        return new Response(
+          JSON.stringify({ success: true, actual_temp, verified, raw: result }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      } catch (e: any) {
+        return new Response(
+          JSON.stringify({ error: e.message, error_kind: e.kind || "unknown" }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
     }
 
     return new Response(JSON.stringify({ error: `unknown action: ${action}` }), {
