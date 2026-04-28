@@ -35,6 +35,19 @@ if (!AUTH_TOKEN) {
 const app = express();
 app.use(express.json({ limit: "32kb" }));
 
+// ─── System name normalization ───────────────────────────────────────────
+// Pentair's dispatcher requires "Pentair: XX-XX-XX" (uppercase hex). Accept
+// loose input from upstream callers and coerce; return null if invalid.
+function normalizeSystemName(input) {
+  if (!input) return null;
+  let s = String(input).trim();
+  s = s.replace(/^pentair\s*:\s*/i, "");
+  s = s.replace(/O/gi, "0"); // O → 0 typo
+  const hex = s.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
+  if (hex.length !== 6) return null;
+  return `Pentair: ${hex.slice(0, 2)}-${hex.slice(2, 4)}-${hex.slice(4, 6)}`;
+}
+
 // ─── Auth ────────────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (req.path === "/healthz" && req.method === "GET") {
@@ -136,12 +149,18 @@ app.get("/healthz", (_req, res) => {
 });
 
 app.post("/api/pool/status", async (req, res) => {
-  const { systemName, password } = req.body || {};
-  if (!systemName || !password) {
-    return res.status(400).json({ error: "systemName and password required" });
+  const { systemName: rawName, password } = req.body || {};
+  if (!rawName) {
+    return res.status(400).json({ error: "systemName required" });
+  }
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
   }
   try {
-    const client = await getClient(systemName, password);
+    const client = await getClient(systemName, password ?? "");
     const status = await fetchStatus(client);
     res.json({ success: true, status });
   } catch (e) {
@@ -152,16 +171,22 @@ app.post("/api/pool/status", async (req, res) => {
 });
 
 app.post("/api/pool/heater", async (req, res) => {
-  const { systemName, password, temp, body: bodyType = "pool" } = req.body || {};
-  if (!systemName || !password) {
-    return res.status(400).json({ error: "systemName and password required" });
+  const { systemName: rawName, password, temp, body: bodyType = "pool" } = req.body || {};
+  if (!rawName) {
+    return res.status(400).json({ error: "systemName required" });
+  }
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
   }
   const t = Number(temp);
   if (!Number.isFinite(t) || t < 50 || t > 110) {
     return res.status(400).json({ error: "temp must be 50-110" });
   }
   try {
-    const client = await getClient(systemName, password);
+    const client = await getClient(systemName, password ?? "");
     // bodyType: 0 = pool, 1 = spa
     const bodyId = bodyType === "spa" ? 1 : 0;
     await client.equipment.setSetPointAsync(bodyId, t);
