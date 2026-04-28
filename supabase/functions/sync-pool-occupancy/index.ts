@@ -151,6 +151,17 @@ function decideTemp(
   return { mode: "eco", temp: ecoTemp, nextCheckin: next?.check_in || null, reason: "vacant >24h" };
 }
 
+function getPacificDateString(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -205,9 +216,15 @@ serve(async (req) => {
         const reservations = await fetchReservations(home.hospitable_property_id!, pat);
         const baseline = home.iaqualink_baseline_temp ?? 80;
         const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
-        const decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
+        let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
 
         const homeName = home.internal_name || home.name;
+        const ecoPausedUntil = (state as any)?.eco_paused_until || null;
+        const ecoPauseActive = decision.mode === "eco" && ecoPausedUntil && getPacificDateString() < ecoPausedUntil;
+        if (ecoPauseActive) {
+          decision = { ...decision, mode: "baseline", temp: baseline, reason: `eco paused until ${ecoPausedUntil}` };
+        }
+        const nextEcoPausedUntil = ecoPauseActive ? ecoPausedUntil : null;
 
         if (state?.current_target_temp === decision.temp && state?.current_mode === decision.mode) {
           // No decision change. Do a drift check: read the actual pool setpoint
@@ -250,6 +267,7 @@ serve(async (req) => {
               last_synced_at: state.last_synced_at,
               last_occupancy_check: nowIso,
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              eco_paused_until: nextEcoPausedUntil,
               notes: `${decision.reason} 🔌 controller offline`,
             }, { onConflict: "home_id" });
             continue;
@@ -271,6 +289,7 @@ serve(async (req) => {
               last_synced_at: nowIso,
               last_occupancy_check: nowIso,
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              eco_paused_until: nextEcoPausedUntil,
               notes: rJson.verified
                 ? `${decision.reason} (drift corrected from ${driftActual}°F)`
                 : `${decision.reason} ⚠️ drift ${driftActual}°F, reapply unverified`,
@@ -290,6 +309,7 @@ serve(async (req) => {
               last_synced_at: driftActual !== null ? nowIso : state.last_synced_at,
               last_occupancy_check: nowIso,
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              eco_paused_until: nextEcoPausedUntil,
               // Controller responded successfully this round — clear any stale
               // "🔌 controller offline" note from a previous failed drift check.
               notes: decision.reason,
@@ -321,6 +341,7 @@ serve(async (req) => {
             last_synced_at: state?.last_synced_at ?? null,
             last_occupancy_check: nowIso,
             next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+            eco_paused_until: nextEcoPausedUntil,
             notes: `${decision.reason} ⚠️ ${result.error || `HTTP ${resp.status}`}`.slice(0, 500),
           }, { onConflict: "home_id" });
           continue;
@@ -345,6 +366,7 @@ serve(async (req) => {
             last_synced_at: nowIso,
             last_occupancy_check: nowIso,
             next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+            eco_paused_until: nextEcoPausedUntil,
             notes: verified ? decision.reason : `${decision.reason} ⚠️ unverified`,
           }, { onConflict: "home_id" });
 

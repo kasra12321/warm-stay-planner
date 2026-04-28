@@ -1,9 +1,11 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { formatDateDisplay } from '@/lib/pacific-time';
-import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer } from 'lucide-react';
+import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer, Loader2, PowerOff } from 'lucide-react';
+import { toast } from 'sonner';
 
 function timeAgo(iso: string | null): string {
   if (!iso) return 'never';
@@ -22,7 +24,21 @@ function modeMeta(mode: string, temp: number | null): { label: string; className
   return { label: `Baseline ${temp ?? 80}°F`, className: 'bg-muted text-muted-foreground hover:bg-muted/90' };
 }
 
+function getTomorrowPacificDate(): string {
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+  const nowParts = Object.fromEntries(formatter.formatToParts(new Date()).map(part => [part.type, part.value]));
+  const tomorrowNoonUtc = new Date(Date.UTC(Number(nowParts.year), Number(nowParts.month) - 1, Number(nowParts.day) + 1, 12));
+  const parts = Object.fromEntries(formatter.formatToParts(tomorrowNoonUtc).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 const AdminOverview = () => {
+  const queryClient = useQueryClient();
   const { data: orders } = useQuery({
     queryKey: ['admin-orders'],
     queryFn: async () => {
@@ -41,7 +57,7 @@ const AdminOverview = () => {
     queryFn: async () => {
       const { data: homes, error: hErr } = await supabase
         .from('homes')
-        .select('id, name')
+        .select('id, name, iaqualink_baseline_temp, controller_type')
         .eq('iaqualink_enabled', true)
         .eq('active', true)
         .order('name');
@@ -58,6 +74,42 @@ const AdminOverview = () => {
       }));
     },
     refetchInterval: 60000,
+  });
+
+  const pauseEcoMutation = useMutation({
+    mutationFn: async ({ home, state }: { home: any; state: any }) => {
+      const baselineTemp = home.iaqualink_baseline_temp ?? state?.current_target_temp ?? 80;
+      const fnName = home.controller_type === 'screenlogic' ? 'screenlogic-control' : 'iaqualink-control';
+      const { data, error } = await supabase.functions.invoke(fnName, {
+        body: { action: 'set-temp', home_id: home.id, temp: baselineTemp },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      const actualTemp = typeof data?.actual_temp === 'number' ? data.actual_temp : baselineTemp;
+      const pausedUntil = getTomorrowPacificDate();
+      const payload: any = {
+        home_id: home.id,
+        current_mode: 'baseline',
+        current_target_temp: actualTemp,
+        last_synced_at: new Date().toISOString(),
+        last_occupancy_check: new Date().toISOString(),
+        next_checkin_date: state?.next_checkin_date ?? null,
+        eco_paused_until: pausedUntil,
+        notes: `eco paused until ${pausedUntil}`,
+      };
+      const { error: stateError } = await supabase
+        .from('home_pool_state')
+        .upsert(payload, { onConflict: 'home_id' });
+      if (stateError) throw stateError;
+      return { pausedUntil };
+    },
+    onSuccess: ({ pausedUntil }) => {
+      toast.success(`Eco paused until ${formatDateDisplay(pausedUntil)}`);
+      queryClient.invalidateQueries({ queryKey: ['admin-pool-states'] });
+    },
+    onError: (error: any) => {
+      toast.error(error.message || 'Failed to pause eco');
+    },
   });
 
   const { data: reminders } = useQuery({
@@ -175,7 +227,21 @@ const AdminOverview = () => {
                         <div className="text-xs text-muted-foreground mt-1 italic truncate">{state.notes}</div>
                       )}
                     </div>
-                    <Badge className={`text-xs whitespace-nowrap ${meta.className}`}>{meta.label}</Badge>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {mode === 'eco' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => pauseEcoMutation.mutate({ home, state })}
+                          disabled={pauseEcoMutation.isPending}
+                        >
+                          {pauseEcoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
+                          Off
+                        </Button>
+                      )}
+                      <Badge className={`text-xs whitespace-nowrap ${meta.className}`}>{meta.label}</Badge>
+                    </div>
                   </div>
                 );
               })}
