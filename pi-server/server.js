@@ -113,10 +113,12 @@ async function getClient(systemName, password) {
  * keep parity with the iAquaLink interface used by the rest of the app.
  */
 async function fetchStatus(client) {
-  const [equip, controllerCfg] = await Promise.all([
-    client.equipment.getEquipmentStateAsync(),
-    client.controller.getControllerConfigAsync().catch(() => null),
-  ]);
+  // NOTE: getControllerConfigAsync also lives on `client.equipment`, NOT
+  // `client.controller` (which is the outgoing-message command bag). Calling
+  // `client.controller.getControllerConfigAsync()` throws "is not a function"
+  // and crashes the request, which is why Cloudflare was returning HTML 502s.
+  // We don't actually use the controller config, so just fetch equipment state.
+  const equip = await client.equipment.getEquipmentStateAsync();
 
   // node-screenlogic surfaces bodies as an array; index 0 is typically pool, 1 spa.
   const bodies = equip?.bodies || equip?.bodyArray || [];
@@ -134,7 +136,7 @@ async function fetchStatus(client) {
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
     air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
-    raw: { equip, controllerCfg },
+    raw: { equip },
   };
 }
 
