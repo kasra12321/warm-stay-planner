@@ -98,6 +98,7 @@ async function callPi(
   piToken: string,
 ) {
   const url = `${piUrl.replace(/\/$/, "")}${path}`;
+  console.log(`[screenlogic-control] → Pi ${body ? "POST" : "GET"} ${url}`, body ? { systemName: (body as any).systemName } : {});
   let r: Response;
   try {
     r = await fetch(url, {
@@ -111,6 +112,7 @@ async function callPi(
       signal: AbortSignal.timeout(30_000),
     });
   } catch (e: any) {
+    console.error(`[screenlogic-control] ✗ fetch failed for ${url}:`, e?.message || e);
     if (e?.name === "TimeoutError" || e?.name === "AbortError") {
       const err: any = new Error("Timed out waiting for the Raspberry Pi bridge (30s). The Pi may be offline or the Pentair handshake is hung.");
       err.kind = "timeout";
@@ -121,6 +123,10 @@ async function callPi(
     throw err;
   }
   const text = await r.text();
+  console.log(`[screenlogic-control] ← Pi status=${r.status} bytes=${text.length} contentType=${r.headers.get("content-type") || "?"}`);
+  if (!r.ok) {
+    console.error(`[screenlogic-control] Pi error body (first 500):`, text.slice(0, 500));
+  }
   let json: any = null;
   try {
     json = text ? JSON.parse(text) : null;

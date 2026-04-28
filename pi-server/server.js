@@ -35,6 +35,13 @@ if (!AUTH_TOKEN) {
 const app = express();
 app.use(express.json({ limit: "32kb" }));
 
+// Request logger — shows every incoming request so we can confirm the cloud
+// is actually reaching the Pi.
+app.use((req, _res, next) => {
+  console.log(`[req] ${req.method} ${req.path} from ${req.ip} systemName=${req.body?.systemName || "-"}`);
+  next();
+});
+
 // ─── System name normalization ───────────────────────────────────────────
 // Pentair's dispatcher requires "Pentair: XX-XX-XX" (uppercase hex). Accept
 // loose input from upstream callers and coerce; return null if invalid.
