@@ -189,7 +189,7 @@ app.post("/api/pool/heater", async (req, res) => {
     const client = await getClient(systemName, password ?? "");
     // bodyType: 0 = pool, 1 = spa
     const bodyId = bodyType === "spa" ? 1 : 0;
-    await client.equipment.setSetPointAsync(bodyId, t);
+    await client.bodies.setSetPointAsync(bodyId, t);
 
     // Verify by re-reading after a short delay
     await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
