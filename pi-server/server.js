@@ -127,13 +127,13 @@ async function fetchStatus(client) {
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
 
   return {
-    pool_temp: pool.currentTemperature ?? pool.lastTemperature ?? null,
+    pool_temp: pool.currentTemp ?? pool.currentTemperature ?? pool.lastTemperature ?? null,
     pool_set_point: pool.heatSetPoint ?? pool.setPoint ?? null,
     pool_heater: heaterStr(pool.heatStatus),
-    spa_temp: spa.currentTemperature ?? spa.lastTemperature ?? null,
+    spa_temp: spa.currentTemp ?? spa.currentTemperature ?? spa.lastTemperature ?? null,
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
-    air_temp: equip?.airTemperature ?? null,
+    air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
     raw: { equip, controllerCfg },
   };
 }
