@@ -50,9 +50,25 @@ async function fetchReservations(propertyId: string, pat: string): Promise<Reser
       const cdata = await cr.json();
       const days: Array<{ date: string; status?: { available?: boolean; reason?: string } }> =
         cdata?.data?.days || [];
+      // Only treat days that are blocked because of an actual reservation
+      // (direct/manual booking, owner stay, or OTA reservation imported via
+      // Hospitable's calendar) as "occupied". Hospitable's calendar also
+      // marks days unavailable for non-guest reasons — `ADVANCED_NOTICE`
+      // (lead-time buffer Airbnb adds before today), `USER` (manual block
+      // the host placed on the calendar), `MIN_STAY`, etc. Treating those
+      // as occupied incorrectly forces baseline heat on an empty house.
+      const reservationReasons = new Set(["RESERVATION", "RESERVED", "BOOKED", "OWNER_STAY"]);
       const blocked = new Set(
         days
-          .filter((d) => d?.status && d.status.available === false)
+          .filter((d) => {
+            if (!d?.status || d.status.available !== false) return false;
+            const reason = String((d.status as any).reason || "").toUpperCase();
+            const sourceType = String((d.status as any).source_type || "").toUpperCase();
+            // Accept either an explicit reservation-style reason, or a
+            // RESERVATION source_type whose reason isn't AVAILABLE (covers
+            // direct bookings that Hospitable doesn't always label).
+            return reservationReasons.has(reason) || (sourceType === "RESERVATION" && reason !== "AVAILABLE");
+          })
           .map((d) => d.date),
       );
 
