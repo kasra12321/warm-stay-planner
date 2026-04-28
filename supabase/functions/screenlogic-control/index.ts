@@ -74,14 +74,17 @@ function classifyPiError(status: number, rawText: string, parsed: any): {
   if (status === 401 || status === 403) {
     return { kind: "unauthorized", message: "Pi rejected the auth token. Verify SCREENLOGIC_PI_AUTH_TOKEN matches the Pi's /etc/poolheat.env." };
   }
-  if (looksHtml || status === 502 || status === 503 || status === 504) {
+  // Only treat as "tunnel down" if Cloudflare itself served an HTML error page.
+  // The Pi's poolheat service also returns 502 when the ScreenLogic dispatcher
+  // / adapter fails — in that case we get JSON back and want to surface it.
+  if (looksHtml) {
     return {
       kind: "tunnel_down",
       message: "Raspberry Pi bridge is unreachable (Cloudflare tunnel up but poolheat service is not responding). On the Pi run: sudo systemctl restart poolheat",
     };
   }
-  const piMsg = parsed?.error || rawText || "unknown error";
-  return { kind: "screenlogic", message: `ScreenLogic error: ${piMsg}` };
+  const piMsg = parsed?.error || parsed?.message || rawText || `HTTP ${status}`;
+  return { kind: "screenlogic", message: `ScreenLogic error (HTTP ${status}): ${piMsg}` };
 }
 
 async function callPi(
