@@ -31,9 +31,9 @@ function getTomorrowPacificDate(): string {
     month: '2-digit',
     day: '2-digit',
   });
-  const todayPacific = new Date(formatter.format(new Date()));
-  todayPacific.setDate(todayPacific.getDate() + 1);
-  const parts = Object.fromEntries(formatter.formatToParts(todayPacific).map(part => [part.type, part.value]));
+  const nowParts = Object.fromEntries(formatter.formatToParts(new Date()).map(part => [part.type, part.value]));
+  const tomorrowNoonUtc = new Date(Date.UTC(Number(nowParts.year), Number(nowParts.month) - 1, Number(nowParts.day) + 1, 12));
+  const parts = Object.fromEntries(formatter.formatToParts(tomorrowNoonUtc).map(part => [part.type, part.value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
@@ -227,7 +227,21 @@ const AdminOverview = () => {
                         <div className="text-xs text-muted-foreground mt-1 italic truncate">{state.notes}</div>
                       )}
                     </div>
-                    <Badge className={`text-xs whitespace-nowrap ${meta.className}`}>{meta.label}</Badge>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {mode === 'eco' && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          onClick={() => pauseEcoMutation.mutate({ home, state })}
+                          disabled={pauseEcoMutation.isPending}
+                        >
+                          {pauseEcoMutation.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PowerOff className="w-3.5 h-3.5" />}
+                          Off
+                        </Button>
+                      )}
+                      <Badge className={`text-xs whitespace-nowrap ${meta.className}`}>{meta.label}</Badge>
+                    </div>
                   </div>
                 );
               })}
