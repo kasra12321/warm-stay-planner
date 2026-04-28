@@ -55,19 +55,10 @@ export function PaymentInstructions({
   const handlePaid = async () => {
     setConfirming(true);
     try {
+      // Status was already set to <method>_submitted at order creation, and
+      // admin notify / reminders / guest SMS were dispatched then. This button
+      // is now just a confirmation step that takes the guest to the receipt.
       const newStatus = STATUS_MAP[paymentMethod];
-      const { error: updErr } = await supabase
-        .from('orders')
-        .update({ status: newStatus })
-        .eq('id', orderId);
-      if (updErr) throw updErr;
-
-      // Fire admin notifications + reminders + guest SMS in parallel
-      await Promise.allSettled([
-        supabase.functions.invoke('notify-admin-order', { body: { orderId } }),
-        supabase.functions.invoke('create-reminders', { body: { orderId } }),
-        supabase.functions.invoke('send-guest-sms', { body: { orderId } }),
-      ]);
 
       const summary: OrderSummary = {
         id: orderId,

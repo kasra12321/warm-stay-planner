@@ -274,6 +274,9 @@ serve(async (req) => {
               last_synced_at: driftActual !== null ? nowIso : state.last_synced_at,
               last_occupancy_check: nowIso,
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+              // Controller responded successfully this round — clear any stale
+              // "🔌 controller offline" note from a previous failed drift check.
+              notes: decision.reason,
             }, { onConflict: "home_id" });
           }
           continue;
@@ -292,6 +295,18 @@ serve(async (req) => {
         const result = await resp.json();
         if (!resp.ok || !result.success) {
           errors.push({ home: homeName, error: result.error || `HTTP ${resp.status}` });
+          // Even on failure, record SOMETHING in home_pool_state so newly-added
+          // homes don't appear blank in the admin view forever. Preserve any
+          // previously-known target temp; mark the error in notes.
+          await supabase.from("home_pool_state").upsert({
+            home_id: home.id,
+            current_mode: decision.mode,
+            current_target_temp: state?.current_target_temp ?? null,
+            last_synced_at: state?.last_synced_at ?? null,
+            last_occupancy_check: nowIso,
+            next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
+            notes: `${decision.reason} ⚠️ ${result.error || `HTTP ${resp.status}`}`.slice(0, 500),
+          }, { onConflict: "home_id" });
           continue;
         }
 
