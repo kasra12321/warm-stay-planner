@@ -61,7 +61,7 @@ serve(async (req) => {
     // Get order with dates and home
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("*, order_dates(*), homes(name, internal_name, iaqualink_enabled, iaqualink_baseline_temp)")
+      .select("*, order_dates(*), homes(name, internal_name, controller_enabled, baseline_temp)")
       .eq("id", orderId)
       .single();
 
@@ -70,8 +70,8 @@ serve(async (req) => {
     const dates = (order.order_dates as any[]).sort((a: any, b: any) => a.date.localeCompare(b.date));
     const homeNode = order.homes as any;
     const homeName = homeNode.internal_name || homeNode.name;
-    const isIAqua = !!homeNode.iaqualink_enabled;
-    const baselineTemp = homeNode.iaqualink_baseline_temp ?? 80;
+    const isIAqua = !!homeNode.controller_enabled;
+    const baselineTemp = homeNode.baseline_temp ?? 80;
     const turnOffMessage = isIAqua
       ? `Set pool back to ${baselineTemp}°F at ${homeName}`
       : `Turn off pool heat at ${homeName}`;
@@ -304,46 +304,7 @@ END:VCALENDAR`;
       console.error("Calendar invite email error:", e);
     }
 
-    // Send admin SMS notification
-    try {
-      const { data: smsSettings } = await supabase.from("settings").select("*").single();
-      const adminPhone = smsSettings?.admin_sms_number;
-      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-      const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-
-      if (adminPhone && LOVABLE_API_KEY && TWILIO_API_KEY && smsSettings?.twilio_from_number) {
-        const allDates = dates.map((d: any) => d.date).sort();
-        const firstDateStr = allDates[0];
-        const lastDateStr = allDates[allDates.length - 1];
-        const dateRange = allDates.length === 1 ? firstDateStr : `${firstDateStr} to ${lastDateStr}`;
-        const temps = [...new Set(dates.map((d: any) => d.temperature))].join("°/") + "°F";
-
-        const smsBody = `🔥 New Pool Heat Order!\n${homeName}\nGuest: ${order.guest_name}\nDates: ${dateRange} (${allDates.length} day${allDates.length > 1 ? 's' : ''})\nTemp: ${temps}\nTotal: $${order.total}\nPayment: ${order.payment_method}`;
-
-        const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
-        const smsResponse = await fetch(`${GATEWAY_URL}/Messages.json`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "X-Connection-Api-Key": TWILIO_API_KEY,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            To: adminPhone,
-            From: smsSettings.twilio_from_number,
-            Body: smsBody,
-          }),
-        });
-
-        if (!smsResponse.ok) {
-          console.error("Admin SMS failed:", await smsResponse.text());
-        } else {
-          console.log(`Admin SMS sent to ${adminPhone}`);
-        }
-      }
-    } catch (e) {
-      console.error("Admin SMS error:", e);
-    }
+    // Admin SMS removed — email only.
 
     return new Response(JSON.stringify({ success: true, count: reminders.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

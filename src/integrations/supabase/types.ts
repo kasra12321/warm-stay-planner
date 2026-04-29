@@ -91,14 +91,14 @@ export type Database = {
       homes: {
         Row: {
           active: boolean
+          baseline_temp: number
+          controller_enabled: boolean
           controller_type: string
           cover_photo_url: string | null
           created_at: string
           eco_mode_enabled: boolean
           eco_temp: number
           hospitable_property_id: string | null
-          iaqualink_baseline_temp: number
-          iaqualink_enabled: boolean
           iaqualink_serial: string | null
           iaqualink_temp_sensor_index: number
           id: string
@@ -111,14 +111,14 @@ export type Database = {
         }
         Insert: {
           active?: boolean
+          baseline_temp?: number
+          controller_enabled?: boolean
           controller_type?: string
           cover_photo_url?: string | null
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
           hospitable_property_id?: string | null
-          iaqualink_baseline_temp?: number
-          iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
           id?: string
@@ -131,14 +131,14 @@ export type Database = {
         }
         Update: {
           active?: boolean
+          baseline_temp?: number
+          controller_enabled?: boolean
           controller_type?: string
           cover_photo_url?: string | null
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
           hospitable_property_id?: string | null
-          iaqualink_baseline_temp?: number
-          iaqualink_enabled?: boolean
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
           id?: string

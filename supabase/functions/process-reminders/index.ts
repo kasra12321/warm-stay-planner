@@ -21,7 +21,7 @@ serve(async (req) => {
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase
       .from("reminders")
-      .select("*, homes(name, internal_name, iaqualink_enabled, iaqualink_serial, iaqualink_baseline_temp, controller_type, screenlogic_system_name)")
+      .select("*, homes(name, internal_name, controller_enabled, iaqualink_serial, baseline_temp, controller_type, screenlogic_system_name)")
       .eq("sent", false)
       .lte("scheduled_at", now)
       .order("scheduled_at")
@@ -47,7 +47,7 @@ serve(async (req) => {
         let autoStatusLine = "";
 
         // Auto-execute via whichever controller this home is configured for.
-        // `iaqualink_enabled` doubles as the "auto-control enabled" flag for both
+        // `controller_enabled` doubles as the "auto-control enabled" flag for both
         // controllers; the controller_type column picks which edge function to call.
         const controllerType = home?.controller_type || "iaqualink";
         const controlFn =
@@ -57,12 +57,12 @@ serve(async (req) => {
             ? !!home?.screenlogic_system_name
             : !!home?.iaqualink_serial;
 
-        if (home?.iaqualink_enabled && hasController) {
+        if (home?.controller_enabled && hasController) {
           let targetTemp: number | null = null;
           if (reminder.action_type === "turn_on" || reminder.action_type === "change") {
             targetTemp = reminder.target_temperature;
           } else if (reminder.action_type === "turn_off") {
-            targetTemp = home.iaqualink_baseline_temp ?? 80;
+            targetTemp = home.baseline_temp ?? 80;
           }
 
           if (targetTemp !== null) {
@@ -97,28 +97,8 @@ serve(async (req) => {
 
         const augmentedMessage = reminder.message + autoStatusLine;
 
-        // Send SMS via Twilio connector if configured
-        if (settings?.admin_sms_number && settings?.twilio_from_number) {
-          const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-          const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-
-          if (LOVABLE_API_KEY && TWILIO_API_KEY) {
-            const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
-            await fetch(`${GATEWAY_URL}/Messages.json`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                "X-Connection-Api-Key": TWILIO_API_KEY,
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                To: settings.admin_sms_number,
-                From: settings.twilio_from_number,
-                Body: augmentedMessage,
-              }),
-            });
-          }
-        }
+        // SMS notifications removed — email only.
+        void augmentedMessage;
 
         // Send reminder email via Resend
         if (settings?.admin_email || settings?.admin_calendar_email) {
@@ -129,7 +109,7 @@ serve(async (req) => {
             const recipientEmail = settings.admin_calendar_email || settings.admin_email;
 
             const autoBadge = autoExecuted
-              ? `<div style="background:#d4edda;color:#155724;padding:10px;border-radius:6px;margin:12px 0;">✅ <strong>Auto-set to ${reminder.action_type === "turn_off" ? (home.iaqualink_baseline_temp ?? 80) : reminder.target_temperature}°F</strong> via iAquaLink</div>`
+              ? `<div style="background:#d4edda;color:#155724;padding:10px;border-radius:6px;margin:12px 0;">✅ <strong>Auto-set to ${reminder.action_type === "turn_off" ? (home.baseline_temp ?? 80) : reminder.target_temperature}°F</strong> via iAquaLink</div>`
               : autoResult
               ? `<div style="background:#f8d7da;color:#721c24;padding:10px;border-radius:6px;margin:12px 0;">⚠️ <strong>Auto-set failed:</strong> ${autoResult}</div>`
               : "";
@@ -186,7 +166,7 @@ serve(async (req) => {
           const isGuestHeat = reminder.action_type === "turn_on" || reminder.action_type === "change";
           const appliedTemp =
             reminder.action_type === "turn_off"
-              ? home.iaqualink_baseline_temp ?? 80
+              ? home.baseline_temp ?? 80
               : reminder.target_temperature;
           await supabase.from("home_pool_state").upsert(
             {

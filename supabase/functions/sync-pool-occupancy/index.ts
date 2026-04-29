@@ -179,8 +179,8 @@ serve(async (req) => {
 
     const { data: homes, error } = await supabase
       .from("homes")
-      .select("id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name")
-      .eq("iaqualink_enabled", true)
+      .select("id, name, internal_name, iaqualink_serial, controller_enabled, baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name")
+      .eq("controller_enabled", true)
       .not("hospitable_property_id", "is", null);
     if (error) throw error;
 
@@ -214,7 +214,7 @@ serve(async (req) => {
         }
 
         const reservations = await fetchReservations(home.hospitable_property_id!, pat);
-        const baseline = home.iaqualink_baseline_temp ?? 80;
+        const baseline = home.baseline_temp ?? 80;
         const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
         let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
 
@@ -396,29 +396,7 @@ serve(async (req) => {
       }
       const summary = summaryLines.join("\n");
 
-      // SMS
-      const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-      if (settings?.admin_sms_number && settings?.twilio_from_number && LOVABLE_API_KEY && TWILIO_API_KEY) {
-        try {
-          await fetch("https://connector-gateway.lovable.dev/twilio/Messages.json", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-              "X-Connection-Api-Key": TWILIO_API_KEY,
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              To: settings.admin_sms_number,
-              From: settings.twilio_from_number,
-              Body: `🌡️ Pool Eco Sync\n${summary}`,
-            }),
-          });
-        } catch (e) {
-          console.error("SMS failed", e);
-        }
-      }
-
-      // Email
+      // Email (SMS removed — email only)
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       const recipient = settings?.admin_calendar_email || settings?.admin_email;
       if (recipient && LOVABLE_API_KEY && RESEND_API_KEY) {
