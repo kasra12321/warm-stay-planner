@@ -1,53 +1,74 @@
+# Changes
 
+## 1. Schedule page — show orders AND guest stays
 
-## Fix Stripe webhook (disabled by Stripe after 9 days of failures)
+Currently `AdminSchedule.tsx` only lists rows from `reminders` (heat actions tied to paid orders). Eco/baseline transitions driven by guest occupancy never create reminder rows — they're applied directly by the hourly `sync-pool-occupancy` job — so they don't appear.
 
-### What's wrong
-Stripe disabled `stripe-webhook` because every event was failing. Two root causes:
+Update `src/pages/admin/AdminSchedule.tsx` to render two stacked sections:
 
-1. **Wrong webhook secret.** `STRIPE_WEBHOOK_SECRET` doesn't match the live endpoint Stripe is signing with → `constructEventAsync` throws → 400 response → Stripe retries → after 9 days of failures, Stripe disables the endpoint. The "test mode" secret was likely stored when only live events are being sent (account 334 Poplar is live mode).
+- **Order-driven heat actions** — same query as today (`reminders` + `homes` + `orders`), split into Upcoming / Completed.
+- **Guest occupancy schedule** — query `home_pool_state` joined to `homes` for every home with `iaqualink_enabled = true`. For each home show:
+  - Home name
+  - Current mode (Baseline / Guest Heat / Eco) with temp
+  - Next check-in date (`next_checkin_date`) with a derived line: "Restore to baseline at <date - 1 day> 8 AM PT" when current mode is `eco` and a check-in exists.
+  - If `eco_paused_until` is in the future, show "Eco paused until <date>".
+- Sort by `next_checkin_date` ascending, nulls last.
 
-2. **Webhook isn't actually needed for the happy path, but it's brittle when it does fire.** We use Stripe **embedded checkout** with `return_url=/?payment_status=success`. `Index.tsx` already loads the order from the DB and shows confirmation when the user returns. The webhook only matters for: (a) users who close the tab before redirect, (b) reminders/SMS/admin notify if the user never returns. Currently those side-effects ONLY happen in the webhook — so when the webhook is disabled, no reminders or admin notifications get created for Stripe orders.
+No backend / migration changes required for this section.
 
-### The fix
+## 2. Heat Settings — add new temperature tiers
 
-**Step 1 — Re-enable + rotate the webhook secret**
-- You re-enable the endpoint in Stripe Dashboard → Webhooks → enable `https://tjhgvqycztmixzoesxww.supabase.co/functions/v1/stripe-webhook`
-- Copy the **signing secret** (`whsec_...`) for that specific endpoint in **live mode**
-- Update `STRIPE_WEBHOOK_SECRET` in Lovable Cloud secrets with the live value
+Update `src/pages/admin/AdminHeatSettings.tsx`:
 
-**Step 2 — Make `stripe-webhook` Stripe-friendly (always return 2xx unless signature fails)**
-Rewrite so it never returns 4xx/5xx for "business logic" issues — only for invalid signatures. Stripe only retries on non-2xx, so any non-signature error must be logged and swallowed.
-- Verify signature → if invalid, return **400** (correct, tells Stripe to stop)
-- Order not found, already processed, settings missing, SMS failed, reminder creation failed → log and return **200**
-- Use `.maybeSingle()` everywhere
-- Wrap each side-effect (mark paid, create reminders, notify admin, send SMS) in its own try/catch so one failure doesn't cascade
+- Add an **"Add temperature option"** row at the bottom with two inputs (temp °F, $/day) and a Save button that inserts into `heating_options` (active = true).
+- Add a small **delete (or deactivate)** button on each existing card. Use soft delete by setting `active = false` to preserve historical orders.
+- Invalidate the `admin-heating-options` query after each mutation.
 
-**Step 3 — Move the side-effects so they fire even when the webhook is disabled**
-Right now Stripe success has two completion paths and they don't agree:
-- **Browser return** (`Index.tsx` loads order) → shows confirmation, but does NOT create reminders, notify admin, or send SMS
-- **Webhook** → does all four things
+No schema changes — the table already supports this.
 
-Move reminders + admin notify + guest SMS into a single `finalize-stripe-order` edge function. Call it from BOTH:
-- The webhook (server-confirmed path)
-- A new client call after the browser return (`Index.tsx` after loading the paid order)
+## 3. Notifications — email only, drop SMS
 
-Make `finalize-stripe-order` **idempotent** — track on the order whether each side-effect has fired (`reminders_created_at`, `admin_notified_at`, `guest_sms_sent_at` columns), so calling it twice is safe.
+Front-end `src/pages/admin/AdminNotificationSettings.tsx`:
+- Remove the SMS card entirely (admin phone + Twilio From inputs).
+- Keep Admin Email + Calendar Invite Email.
+- Drop `admin_sms_number` and `twilio_from_number` from the save mutation.
 
-**Step 4 — Add an alert for future webhook outages**
-Add a daily cron that queries: any `stripe_pending` order older than 1 hour with a `stripe_session_id` → check Stripe API for that session's payment status → if paid, finalize it. This catches anything that slipped through both the webhook and the browser return.
+Edge functions — remove the SMS branch (keep email):
+- `supabase/functions/process-reminders/index.ts` — delete the Twilio block.
+- `supabase/functions/notify-admin-order/index.ts` — delete the admin SMS block (guest SMS via `send-guest-sms` stays; that's a guest-facing confirmation, not an admin notification).
+- `supabase/functions/create-reminders/index.ts` — delete the trailing admin SMS block.
 
-### Files changed
-- `supabase/functions/stripe-webhook/index.ts` — never throw on business errors, always 200 unless bad signature; delegate side-effects to `finalize-stripe-order`
-- `supabase/functions/finalize-stripe-order/index.ts` — **new**, idempotent, runs reminders + admin notify + guest SMS
-- `supabase/functions/reconcile-stripe-orders/index.ts` — **new**, daily cron safety net
-- `src/pages/Index.tsx` — after loading the paid order on browser return, invoke `finalize-stripe-order`
-- New migration: add `reminders_created_at`, `admin_notified_at`, `guest_sms_sent_at` to `orders`; schedule `reconcile-stripe-orders` hourly via pg_cron
+We're leaving the DB columns (`admin_sms_number`, `twilio_from_number`) in place (no destructive migration) — they're just unused. `send-guest-sms` continues to work for guest order confirmations.
 
-### What you need to do
-1. Go to Stripe Dashboard → Developers → Webhooks → re-enable the disabled endpoint
-2. Copy that endpoint's **live signing secret** (`whsec_...`)
-3. Paste it when I ask you to update `STRIPE_WEBHOOK_SECRET`
+## 4. Rename `iaqualink_enabled` → `controller_enabled` and `iaqualink_baseline_temp` → `baseline_temp`
 
-Then I'll deploy the rewritten webhook + finalize function + reconciler.
+Database migration:
 
+```sql
+ALTER TABLE public.homes RENAME COLUMN iaqualink_enabled TO controller_enabled;
+ALTER TABLE public.homes RENAME COLUMN iaqualink_baseline_temp TO baseline_temp;
+```
+
+Then update every reference (rg results show these files):
+- `src/pages/admin/AdminIAquaLink.tsx` (Home interface, select/update payloads, label "Enabled")
+- `src/pages/admin/AdminOverview.tsx` (`pauseEcoMutation`, `poolStates` query, badge label fallback)
+- `src/pages/admin/AdminHomes.tsx` (verify and update if referenced)
+- `supabase/functions/sync-pool-occupancy/index.ts`
+- `supabase/functions/process-reminders/index.ts`
+- `supabase/functions/create-reminders/index.ts`
+- `supabase/functions/iaqualink-control/index.ts` and `screenlogic-control/index.ts` if they read these columns
+
+`src/integrations/supabase/types.ts` regenerates automatically.
+
+## 5. Pool Control page tweaks
+
+`src/pages/admin/AdminIAquaLink.tsx`:
+- Change page title from `Pool Control (iAquaLink + Eco Mode)` → `Pool Control (Settings & Automation)`.
+- Hide the **iAquaLink Connection** card when no homes have `controller_type = 'iaqualink'` (compute `const anyIAqua = homes.some(h => h.controller_type === 'iaqualink')` and gate the card on it).
+- Update the per-home enable label: keep "Enabled" but bind to `controller_enabled`.
+
+# Technical notes
+
+- All edge functions touched in step 3 and step 4 will be redeployed (`process-reminders`, `notify-admin-order`, `create-reminders`, `sync-pool-occupancy`, `iaqualink-control`, `screenlogic-control`).
+- `useData.ts`, RLS policies, and stored functions (`get_blocked_dates`) don't reference the renamed columns.
+- No data loss: migration is a pure column rename; old `eco_paused_until` and other columns are untouched.
