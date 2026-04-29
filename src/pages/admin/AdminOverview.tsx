@@ -57,8 +57,8 @@ const AdminOverview = () => {
     queryFn: async () => {
       const { data: homes, error: hErr } = await supabase
         .from('homes')
-        .select('id, name, iaqualink_baseline_temp, controller_type')
-        .eq('iaqualink_enabled', true)
+        .select('id, name, baseline_temp, controller_type')
+        .eq('controller_enabled', true)
         .eq('active', true)
         .order('name');
       if (hErr) throw hErr;
@@ -78,7 +78,7 @@ const AdminOverview = () => {
 
   const pauseEcoMutation = useMutation({
     mutationFn: async ({ home, state }: { home: any; state: any }) => {
-      const baselineTemp = home.iaqualink_baseline_temp ?? state?.current_target_temp ?? 80;
+      const baselineTemp = home.baseline_temp ?? state?.current_target_temp ?? 80;
       const fnName = home.controller_type === 'screenlogic' ? 'screenlogic-control' : 'iaqualink-control';
       const { data, error } = await supabase.functions.invoke(fnName, {
         body: { action: 'set-temp', home_id: home.id, temp: baselineTemp },

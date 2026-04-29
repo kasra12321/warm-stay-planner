@@ -14,8 +14,8 @@ interface Home {
   name: string;
   internal_name: string | null;
   iaqualink_serial: string | null;
-  iaqualink_enabled: boolean;
-  iaqualink_baseline_temp: number;
+  controller_enabled: boolean;
+  baseline_temp: number;
   iaqualink_temp_sensor_index: number;
   hospitable_property_id: string | null;
   eco_mode_enabled: boolean;
@@ -92,7 +92,7 @@ const AdminIAquaLink = () => {
   const loadHomes = async () => {
     const { data, error } = await supabase
       .from('homes')
-      .select('id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name, screenlogic_password')
+      .select('id, name, internal_name, iaqualink_serial, controller_enabled, baseline_temp, iaqualink_temp_sensor_index, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name, screenlogic_password')
       .order('name');
     if (error) {
       toast({ title: 'Failed to load homes', description: error.message, variant: 'destructive' });
@@ -169,8 +169,8 @@ const AdminIAquaLink = () => {
       .from('homes')
       .update({
         iaqualink_serial: home.iaqualink_serial,
-        iaqualink_enabled: home.iaqualink_enabled,
-        iaqualink_baseline_temp: home.iaqualink_baseline_temp,
+        controller_enabled: home.controller_enabled,
+        baseline_temp: home.baseline_temp,
         iaqualink_temp_sensor_index: home.iaqualink_temp_sensor_index,
         hospitable_property_id: home.hospitable_property_id,
         eco_mode_enabled: home.eco_mode_enabled,
@@ -333,8 +333,8 @@ const AdminIAquaLink = () => {
                         <Label htmlFor={`enabled-${home.id}`} className="text-sm">Enabled</Label>
                         <Switch
                           id={`enabled-${home.id}`}
-                          checked={home.iaqualink_enabled}
-                          onCheckedChange={(v) => updateHome(home.id, { iaqualink_enabled: v })}
+                          checked={home.controller_enabled}
+                          onCheckedChange={(v) => updateHome(home.id, { controller_enabled: v })}
                         />
                       </div>
                     </div>
@@ -378,8 +378,8 @@ const AdminIAquaLink = () => {
                           <Label className="text-xs text-muted-foreground">Baseline temp (°F)</Label>
                           <Input
                             type="number"
-                            value={home.iaqualink_baseline_temp}
-                            onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
+                            value={home.baseline_temp}
+                            onChange={(e) => updateHome(home.id, { baseline_temp: parseInt(e.target.value) || 80 })}
                           />
                         </div>
                       </div>
@@ -415,8 +415,8 @@ const AdminIAquaLink = () => {
                         <Label className="text-xs text-muted-foreground">Baseline temp (°F)</Label>
                         <Input
                           type="number"
-                          value={home.iaqualink_baseline_temp}
-                          onChange={(e) => updateHome(home.id, { iaqualink_baseline_temp: parseInt(e.target.value) || 80 })}
+                          value={home.baseline_temp}
+                          onChange={(e) => updateHome(home.id, { baseline_temp: parseInt(e.target.value) || 80 })}
                         />
                       </div>
                       <div>

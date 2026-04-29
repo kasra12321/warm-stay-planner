@@ -179,8 +179,8 @@ serve(async (req) => {
 
     const { data: homes, error } = await supabase
       .from("homes")
-      .select("id, name, internal_name, iaqualink_serial, iaqualink_enabled, iaqualink_baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name")
-      .eq("iaqualink_enabled", true)
+      .select("id, name, internal_name, iaqualink_serial, controller_enabled, baseline_temp, hospitable_property_id, eco_mode_enabled, eco_temp, controller_type, screenlogic_system_name")
+      .eq("controller_enabled", true)
       .not("hospitable_property_id", "is", null);
     if (error) throw error;
 
@@ -214,7 +214,7 @@ serve(async (req) => {
         }
 
         const reservations = await fetchReservations(home.hospitable_property_id!, pat);
-        const baseline = home.iaqualink_baseline_temp ?? 80;
+        const baseline = home.baseline_temp ?? 80;
         const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
         let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
 

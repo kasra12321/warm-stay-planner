@@ -61,7 +61,7 @@ serve(async (req) => {
     // Get order with dates and home
     const { data: order, error: orderErr } = await supabase
       .from("orders")
-      .select("*, order_dates(*), homes(name, internal_name, iaqualink_enabled, iaqualink_baseline_temp)")
+      .select("*, order_dates(*), homes(name, internal_name, controller_enabled, baseline_temp)")
       .eq("id", orderId)
       .single();
 
@@ -70,8 +70,8 @@ serve(async (req) => {
     const dates = (order.order_dates as any[]).sort((a: any, b: any) => a.date.localeCompare(b.date));
     const homeNode = order.homes as any;
     const homeName = homeNode.internal_name || homeNode.name;
-    const isIAqua = !!homeNode.iaqualink_enabled;
-    const baselineTemp = homeNode.iaqualink_baseline_temp ?? 80;
+    const isIAqua = !!homeNode.controller_enabled;
+    const baselineTemp = homeNode.baseline_temp ?? 80;
     const turnOffMessage = isIAqua
       ? `Set pool back to ${baselineTemp}°F at ${homeName}`
       : `Turn off pool heat at ${homeName}`;
