@@ -230,16 +230,18 @@ const AdminIAquaLink = () => {
     );
   }
 
+  const anyIAqua = homes.some((h) => (h.controller_type || 'iaqualink') === 'iaqualink');
+
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Pool Control (iAquaLink + Eco Mode)</h1>
+        <h1 className="text-2xl font-bold">Pool Control (Settings & Automation)</h1>
         <p className="text-muted-foreground text-sm mt-1">
           Connect your Jandy/iAquaLink account and Hospitable so the system can auto-set pool temps for guests and drop to eco temp when vacant.
         </p>
       </div>
 
-      <Card>
+      {anyIAqua && <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Plug className="w-5 h-5" /> iAquaLink Connection
@@ -281,7 +283,7 @@ const AdminIAquaLink = () => {
             </Button>
           )}
         </CardContent>
-      </Card>
+      </Card>}
 
       <Card>
         <CardHeader>
