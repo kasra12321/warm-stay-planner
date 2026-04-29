@@ -396,29 +396,7 @@ serve(async (req) => {
       }
       const summary = summaryLines.join("\n");
 
-      // SMS
-      const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-      if (settings?.admin_sms_number && settings?.twilio_from_number && LOVABLE_API_KEY && TWILIO_API_KEY) {
-        try {
-          await fetch("https://connector-gateway.lovable.dev/twilio/Messages.json", {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${LOVABLE_API_KEY}`,
-              "X-Connection-Api-Key": TWILIO_API_KEY,
-              "Content-Type": "application/x-www-form-urlencoded",
-            },
-            body: new URLSearchParams({
-              To: settings.admin_sms_number,
-              From: settings.twilio_from_number,
-              Body: `🌡️ Pool Eco Sync\n${summary}`,
-            }),
-          });
-        } catch (e) {
-          console.error("SMS failed", e);
-        }
-      }
-
-      // Email
+      // Email (SMS removed — email only)
       const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
       const recipient = settings?.admin_calendar_email || settings?.admin_email;
       if (recipient && LOVABLE_API_KEY && RESEND_API_KEY) {
