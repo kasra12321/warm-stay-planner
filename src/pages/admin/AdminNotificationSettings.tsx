@@ -18,17 +18,13 @@ const AdminNotificationSettings = () => {
     },
   });
 
-  const [smsNumber, setSmsNumber] = useState('');
   const [email, setEmail] = useState('');
   const [calendarEmail, setCalendarEmail] = useState('');
-  const [twilioFrom, setTwilioFrom] = useState('');
 
   useEffect(() => {
     if (settings) {
-      setSmsNumber(settings.admin_sms_number || '');
       setEmail(settings.admin_email || '');
       setCalendarEmail(settings.admin_calendar_email || '');
-      setTwilioFrom(settings.twilio_from_number || '');
     }
   }, [settings]);
 
@@ -36,10 +32,8 @@ const AdminNotificationSettings = () => {
     mutationFn: async () => {
       if (!settings) return;
       const { error } = await supabase.from('settings').update({
-        admin_sms_number: smsNumber,
         admin_email: email,
         admin_calendar_email: calendarEmail,
-        twilio_from_number: twilioFrom,
       }).eq('id', settings.id);
       if (error) throw error;
     },
@@ -54,27 +48,12 @@ const AdminNotificationSettings = () => {
       <h2 className="text-2xl font-bold text-foreground">Notification Settings</h2>
 
       <Card>
-        <CardHeader><CardTitle className="text-lg">SMS</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-1">
-            <Label>Admin Phone Number</Label>
-            <Input value={smsNumber} onChange={e => setSmsNumber(e.target.value)} placeholder="+15551234567" />
-            <p className="text-xs text-muted-foreground">Receives heat action reminders via SMS</p>
-          </div>
-          <div className="space-y-1">
-            <Label>Twilio From Number</Label>
-            <Input value={twilioFrom} onChange={e => setTwilioFrom(e.target.value)} placeholder="+15559876543" />
-            <p className="text-xs text-muted-foreground">Your Twilio phone number for sending SMS</p>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
         <CardHeader><CardTitle className="text-lg">Email</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="space-y-1">
             <Label>Admin Email</Label>
             <Input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@example.com" />
+            <p className="text-xs text-muted-foreground">Receives heat action reminders and order notifications</p>
           </div>
           <div className="space-y-1">
             <Label>Calendar Invite Email</Label>
