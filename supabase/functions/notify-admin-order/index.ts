@@ -44,30 +44,10 @@ serve(async (req) => {
     const smsBody = `🔥 New Pool Heat Order!\n${homeName}\nGuest: ${order.guest_name} (${order.guest_mobile})\nDates: ${dateRange} (${dates.length} day${dates.length > 1 ? "s" : ""})\nTemp: ${temps}\nTotal: $${order.total}\nPayment: ${paymentLabel} (${order.status})`;
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
     const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY");
 
-    // Admin SMS via Twilio
-    if (settings?.admin_sms_number && settings?.twilio_from_number && LOVABLE_API_KEY && TWILIO_API_KEY) {
-      try {
-        const r = await fetch("https://connector-gateway.lovable.dev/twilio/Messages.json", {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "X-Connection-Api-Key": TWILIO_API_KEY,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            To: settings.admin_sms_number,
-            From: settings.twilio_from_number,
-            Body: smsBody,
-          }),
-        });
-        if (!r.ok) console.error("Admin SMS failed:", await r.text());
-      } catch (e) {
-        console.error("Admin SMS error:", e);
-      }
-    }
+    // Admin SMS removed — email only.
+    void smsBody;
 
     // Admin email via Resend
     const recipientEmail = settings?.admin_email || settings?.admin_calendar_email;

@@ -304,46 +304,7 @@ END:VCALENDAR`;
       console.error("Calendar invite email error:", e);
     }
 
-    // Send admin SMS notification
-    try {
-      const { data: smsSettings } = await supabase.from("settings").select("*").single();
-      const adminPhone = smsSettings?.admin_sms_number;
-      const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-      const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-
-      if (adminPhone && LOVABLE_API_KEY && TWILIO_API_KEY && smsSettings?.twilio_from_number) {
-        const allDates = dates.map((d: any) => d.date).sort();
-        const firstDateStr = allDates[0];
-        const lastDateStr = allDates[allDates.length - 1];
-        const dateRange = allDates.length === 1 ? firstDateStr : `${firstDateStr} to ${lastDateStr}`;
-        const temps = [...new Set(dates.map((d: any) => d.temperature))].join("°/") + "°F";
-
-        const smsBody = `🔥 New Pool Heat Order!\n${homeName}\nGuest: ${order.guest_name}\nDates: ${dateRange} (${allDates.length} day${allDates.length > 1 ? 's' : ''})\nTemp: ${temps}\nTotal: $${order.total}\nPayment: ${order.payment_method}`;
-
-        const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
-        const smsResponse = await fetch(`${GATEWAY_URL}/Messages.json`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${LOVABLE_API_KEY}`,
-            "X-Connection-Api-Key": TWILIO_API_KEY,
-            "Content-Type": "application/x-www-form-urlencoded",
-          },
-          body: new URLSearchParams({
-            To: adminPhone,
-            From: smsSettings.twilio_from_number,
-            Body: smsBody,
-          }),
-        });
-
-        if (!smsResponse.ok) {
-          console.error("Admin SMS failed:", await smsResponse.text());
-        } else {
-          console.log(`Admin SMS sent to ${adminPhone}`);
-        }
-      }
-    } catch (e) {
-      console.error("Admin SMS error:", e);
-    }
+    // Admin SMS removed — email only.
 
     return new Response(JSON.stringify({ success: true, count: reminders.length }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

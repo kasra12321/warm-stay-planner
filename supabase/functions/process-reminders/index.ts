@@ -97,28 +97,8 @@ serve(async (req) => {
 
         const augmentedMessage = reminder.message + autoStatusLine;
 
-        // Send SMS via Twilio connector if configured
-        if (settings?.admin_sms_number && settings?.twilio_from_number) {
-          const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-          const TWILIO_API_KEY = Deno.env.get("TWILIO_API_KEY");
-
-          if (LOVABLE_API_KEY && TWILIO_API_KEY) {
-            const GATEWAY_URL = "https://connector-gateway.lovable.dev/twilio";
-            await fetch(`${GATEWAY_URL}/Messages.json`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${LOVABLE_API_KEY}`,
-                "X-Connection-Api-Key": TWILIO_API_KEY,
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                To: settings.admin_sms_number,
-                From: settings.twilio_from_number,
-                Body: augmentedMessage,
-              }),
-            });
-          }
-        }
+        // SMS notifications removed — email only.
+        void augmentedMessage;
 
         // Send reminder email via Resend
         if (settings?.admin_email || settings?.admin_calendar_email) {
