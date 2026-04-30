@@ -131,6 +131,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
             <span className="text-muted-foreground">Guest</span>
             <span className="font-medium">{guestInfo.name}</span>
           </div>
+          <p className="text-xs text-muted-foreground">Day(s) the pool will be heated:</p>
           {selectedDates.map(d => (
             <div key={d.date} className="flex justify-between text-sm">
               <div className="flex items-center gap-2">

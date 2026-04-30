@@ -95,7 +95,7 @@ export function DateSelection({
 
       <div className="text-center space-y-1">
         <h2 className="text-2xl font-bold text-foreground">Select Dates</h2>
-        <p className="text-muted-foreground">Choose pool heating dates for <span className="font-medium text-foreground">{homeName}</span></p>
+        <p className="text-muted-foreground">Pick the day(s) you want the pool heated at <span className="font-medium text-foreground">{homeName}</span></p>
       </div>
 
       {/* Same-day warning */}
@@ -164,6 +164,7 @@ export function DateSelection({
       {selectedDates.length > 0 && (
         <div className="bg-card rounded-xl border p-4 space-y-3">
           <h3 className="font-semibold text-foreground">Order Summary</h3>
+          <p className="text-xs text-muted-foreground">Each date below is a day the pool will be heated.</p>
           <div className="space-y-2">
             {selectedDates.map(d => (
               <div key={d.date} className="flex items-center justify-between text-sm">

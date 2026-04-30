@@ -70,7 +70,7 @@ export function GuestInfoForm({ initial, onSubmit, onBack, homeName }: Props) {
             className="h-12 text-base"
           />
           {errors.mobile && <p className="text-sm text-destructive">{errors.mobile}</p>}
-          <p className="text-xs text-muted-foreground">We'll text your confirmation here</p>
+          <p className="text-xs text-muted-foreground">In case we need to reach you about your booking</p>
         </div>
 
         <div className="space-y-2">
