@@ -442,6 +442,9 @@ export type Database = {
         | "stripe_failed"
         | "awaiting_confirmation"
         | "apple_cash_submitted"
+        | "venmo_pending"
+        | "zelle_pending"
+        | "apple_cash_pending"
       payment_method: "venmo" | "zelle" | "stripe" | "apple_cash"
       reminder_action: "turn_on" | "change" | "turn_off"
     }
@@ -580,6 +583,9 @@ export const Constants = {
         "stripe_failed",
         "awaiting_confirmation",
         "apple_cash_submitted",
+        "venmo_pending",
+        "zelle_pending",
+        "apple_cash_pending",
       ],
       payment_method: ["venmo", "zelle", "stripe", "apple_cash"],
       reminder_action: ["turn_on", "change", "turn_off"],
