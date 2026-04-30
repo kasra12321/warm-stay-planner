@@ -22,6 +22,7 @@ export interface SelectedDate {
 export interface GuestInfo {
   name: string;
   mobile: string;
+  email: string;
 }
 
 export type PaymentMethod = 'venmo' | 'zelle' | 'apple_cash' | 'stripe';

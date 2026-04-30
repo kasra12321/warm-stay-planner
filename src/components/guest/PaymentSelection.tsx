@@ -43,6 +43,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         home_id: home.id,
         guest_name: guestInfo.name,
         guest_mobile: guestInfo.mobile,
+        guest_email: guestInfo.email,
         payment_method: paymentMethod as any,
         status: status as any,
         total,
