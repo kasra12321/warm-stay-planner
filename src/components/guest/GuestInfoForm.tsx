@@ -15,7 +15,8 @@ interface Props {
 export function GuestInfoForm({ initial, onSubmit, onBack, homeName }: Props) {
   const [name, setName] = useState(initial.name);
   const [mobile, setMobile] = useState(initial.mobile);
-  const [errors, setErrors] = useState<{ name?: string; mobile?: string }>({});
+  const [email, setEmail] = useState(initial.email || '');
+  const [errors, setErrors] = useState<{ name?: string; mobile?: string; email?: string }>({});
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,12 +24,14 @@ export function GuestInfoForm({ initial, onSubmit, onBack, homeName }: Props) {
     if (!name.trim()) newErrors.name = 'Name is required';
     if (!mobile.trim()) newErrors.mobile = 'Phone number is required';
     else if (mobile.replace(/\D/g, '').length < 10) newErrors.mobile = 'Enter a valid phone number';
+    if (!email.trim()) newErrors.email = 'Email is required';
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) newErrors.email = 'Enter a valid email';
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors);
       return;
     }
-    onSubmit({ name: name.trim(), mobile: mobile.trim() });
+    onSubmit({ name: name.trim(), mobile: mobile.trim(), email: email.trim().toLowerCase() });
   };
 
   return (
@@ -68,6 +71,20 @@ export function GuestInfoForm({ initial, onSubmit, onBack, homeName }: Props) {
           />
           {errors.mobile && <p className="text-sm text-destructive">{errors.mobile}</p>}
           <p className="text-xs text-muted-foreground">We'll text your confirmation here</p>
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            value={email}
+            onChange={e => { setEmail(e.target.value); setErrors(p => ({ ...p, email: undefined })); }}
+            placeholder="you@example.com"
+            className="h-12 text-base"
+          />
+          {errors.email && <p className="text-sm text-destructive">{errors.email}</p>}
+          <p className="text-xs text-muted-foreground">We'll email you a receipt with payment details</p>
         </div>
 
         <Button type="submit" className="w-full h-12 text-base font-semibold">

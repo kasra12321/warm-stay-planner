@@ -106,6 +106,19 @@ serve(async (req) => {
       results.guest_sms = order.guest_sms_sent_at ? "already_done" : "no_mobile";
     }
 
+    // 4. Send guest receipt email (best-effort, not idempotency-tracked)
+    if (order.guest_email) {
+      try {
+        await supabase.functions.invoke("send-guest-receipt", { body: { orderId } });
+        results.guest_receipt = "sent";
+      } catch (e: any) {
+        console.error("finalize: guest receipt failed:", e?.message || e);
+        results.guest_receipt = `error: ${e?.message || e}`;
+      }
+    } else {
+      results.guest_receipt = "no_email";
+    }
+
     return new Response(JSON.stringify({ ok: true, results }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });

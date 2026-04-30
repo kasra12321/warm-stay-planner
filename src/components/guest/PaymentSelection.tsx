@@ -43,6 +43,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         home_id: home.id,
         guest_name: guestInfo.name,
         guest_mobile: guestInfo.mobile,
+        guest_email: guestInfo.email,
         payment_method: paymentMethod as any,
         status: status as any,
         total,
@@ -82,6 +83,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         supabase.functions.invoke('notify-admin-order', { body: { orderId: order.id } }),
         supabase.functions.invoke('create-reminders', { body: { orderId: order.id } }),
         supabase.functions.invoke('send-guest-sms', { body: { orderId: order.id } }),
+        supabase.functions.invoke('send-guest-receipt', { body: { orderId: order.id } }),
       ]);
       setPendingManual({ orderId: order.id, method: paymentMethod });
     } catch (error) {

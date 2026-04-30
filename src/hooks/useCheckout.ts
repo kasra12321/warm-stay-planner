@@ -5,7 +5,7 @@ export function useCheckout() {
   const [step, setStep] = useState<CheckoutStep>('home');
   const [selectedHome, setSelectedHome] = useState<Home | null>(null);
   const [homeLocked, setHomeLocked] = useState(false);
-  const [guestInfo, setGuestInfo] = useState<GuestInfo>({ name: '', mobile: '' });
+  const [guestInfo, setGuestInfo] = useState<GuestInfo>({ name: '', mobile: '', email: '' });
   const [selectedDates, setSelectedDates] = useState<SelectedDate[]>([]);
   const [orderSummary, setOrderSummary] = useState<OrderSummary | null>(null);
 
