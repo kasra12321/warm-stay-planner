@@ -217,6 +217,7 @@ export type Database = {
         Row: {
           admin_notified_at: string | null
           created_at: string
+          guest_email: string | null
           guest_mobile: string
           guest_name: string
           guest_sms_sent_at: string | null
@@ -231,6 +232,7 @@ export type Database = {
         Insert: {
           admin_notified_at?: string | null
           created_at?: string
+          guest_email?: string | null
           guest_mobile: string
           guest_name: string
           guest_sms_sent_at?: string | null
@@ -245,6 +247,7 @@ export type Database = {
         Update: {
           admin_notified_at?: string | null
           created_at?: string
+          guest_email?: string | null
           guest_mobile?: string
           guest_name?: string
           guest_sms_sent_at?: string | null
