@@ -104,96 +104,40 @@ serve(async (req) => {
       const firstDate = block[0];
       const lastDate = block[block.length - 1];
 
-      // Turn ON at first date 8 AM and 9 AM
+      // Turn ON at first date 8 AM (or immediately if it's already past 8 AM today)
       const isToday8 = firstDate.date === todayStr && currentHour >= 8;
-      const isToday9 = firstDate.date === todayStr && currentHour >= 9;
-
-      if (isToday8) {
-        // Send immediately for the turn-on
-        reminders.push({
-          order_id: orderId,
-          home_id: order.home_id,
-          scheduled_at: new Date().toISOString(),
-          action_type: "turn_on",
-          target_temperature: firstDate.temperature,
-          message: `Turn on pool heat to ${firstDate.temperature}° at ${homeName}`,
-          sent: false,
-        });
-        // If before 9 AM, don't add the 9 AM one
-        if (!isToday9) {
-          // Skip 9 AM since immediate was sent
-        }
-      } else {
-        reminders.push({
-          order_id: orderId,
-          home_id: order.home_id,
-          scheduled_at: toPacificISO(firstDate.date, 8, 0),
-          action_type: "turn_on",
-          target_temperature: firstDate.temperature,
-          message: `Turn on pool heat to ${firstDate.temperature}° at ${homeName}`,
-          sent: false,
-        });
-        reminders.push({
-          order_id: orderId,
-          home_id: order.home_id,
-          scheduled_at: toPacificISO(firstDate.date, 9, 0),
-          action_type: "turn_on",
-          target_temperature: firstDate.temperature,
-          message: `Turn on pool heat to ${firstDate.temperature}° at ${homeName}`,
-          sent: false,
-        });
-      }
+      reminders.push({
+        order_id: orderId,
+        home_id: order.home_id,
+        scheduled_at: isToday8
+          ? new Date().toISOString()
+          : toPacificISO(firstDate.date, 8, 0),
+        action_type: "turn_on",
+        target_temperature: firstDate.temperature,
+        message: `Turn on pool heat to ${firstDate.temperature}° at ${homeName}`,
+        sent: false,
+      });
 
       // Temperature changes within the block
       for (let i = 1; i < block.length; i++) {
         if (block[i].temperature !== block[i - 1].temperature) {
           const changeDate = block[i].date;
           const isChangToday8 = changeDate === todayStr && currentHour >= 8;
-          const isChangToday9 = changeDate === todayStr && currentHour >= 9;
-
-          if (isChangToday8) {
-            reminders.push({
-              order_id: orderId,
-              home_id: order.home_id,
-              scheduled_at: new Date().toISOString(),
-              action_type: "change",
-              target_temperature: block[i].temperature,
-              message: `Change pool heat to ${block[i].temperature}° at ${homeName}`,
-              sent: false,
-            });
-          } else {
-            reminders.push({
-              order_id: orderId,
-              home_id: order.home_id,
-              scheduled_at: toPacificISO(changeDate, 8, 0),
-              action_type: "change",
-              target_temperature: block[i].temperature,
-              message: `Change pool heat to ${block[i].temperature}° at ${homeName}`,
-              sent: false,
-            });
-            reminders.push({
-              order_id: orderId,
-              home_id: order.home_id,
-              scheduled_at: toPacificISO(changeDate, 9, 0),
-              action_type: "change",
-              target_temperature: block[i].temperature,
-              message: `Change pool heat to ${block[i].temperature}° at ${homeName}`,
-              sent: false,
-            });
-          }
+          reminders.push({
+            order_id: orderId,
+            home_id: order.home_id,
+            scheduled_at: isChangToday8
+              ? new Date().toISOString()
+              : toPacificISO(changeDate, 8, 0),
+            action_type: "change",
+            target_temperature: block[i].temperature,
+            message: `Change pool heat to ${block[i].temperature}° at ${homeName}`,
+            sent: false,
+          });
         }
       }
 
-      // Turn OFF at last date 4 PM and 5 PM
-      reminders.push({
-        order_id: orderId,
-        home_id: order.home_id,
-        scheduled_at: toPacificISO(lastDate.date, 16, 0),
-        action_type: "turn_off",
-        target_temperature: null,
-        message: turnOffMessage,
-        sent: false,
-      });
+      // Turn OFF at last date 5 PM
       reminders.push({
         order_id: orderId,
         home_id: order.home_id,
@@ -202,7 +146,8 @@ serve(async (req) => {
         target_temperature: null,
         message: turnOffMessage,
         sent: false,
-});
+      });
+    }
 
 function generateBookingICS(orderId: string, homeName: string, firstDate: string, lastDate: string, temps: string): string {
   // Event spans from 8 AM on first date to 5 PM on last date (Pacific)
@@ -232,7 +177,6 @@ END:VALARM
 END:VEVENT
 END:VCALENDAR`;
 }
-    }
 
     // Insert all reminders
     if (reminders.length > 0) {
