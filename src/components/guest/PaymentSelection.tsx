@@ -28,12 +28,14 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
     setLoading(paymentMethod);
 
     try {
-      // Manual payment methods are trusted at creation time — no separate
-      // "awaiting_confirmation" step. Only Stripe gets validated downstream.
+      // All orders start in a *pending* state. Manual orders are only
+      // finalized (status flipped + notifications sent) once the guest
+      // taps "I've paid" on the instructions screen. Stripe orders are
+      // finalized via the Stripe webhook / finalize function.
       const MANUAL_STATUS = {
-        venmo: 'venmo_submitted',
-        zelle: 'zelle_submitted',
-        apple_cash: 'apple_cash_submitted',
+        venmo: 'venmo_pending',
+        zelle: 'zelle_pending',
+        apple_cash: 'apple_cash_pending',
       } as const;
       const status =
         paymentMethod === 'stripe'
@@ -76,15 +78,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         return;
       }
 
-      // Manual payment: order is already marked submitted/paid. Fire admin
-      // notify + reminders + guest SMS now so the host knows even if the
-      // guest closes the instructions screen without tapping "I've paid".
-      void Promise.allSettled([
-        supabase.functions.invoke('notify-admin-order', { body: { orderId: order.id } }),
-        supabase.functions.invoke('create-reminders', { body: { orderId: order.id } }),
-        supabase.functions.invoke('send-guest-sms', { body: { orderId: order.id } }),
-        supabase.functions.invoke('send-guest-receipt', { body: { orderId: order.id } }),
-      ]);
+      // Manual order is pending. Notifications fire only after "I've paid".
       setPendingManual({ orderId: order.id, method: paymentMethod });
     } catch (error) {
       console.error('Order creation failed:', error);
@@ -189,7 +183,7 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
 
         <Card className="overflow-hidden">
           <CardContent className="p-4">
-            <Button onClick={() => createOrder('stripe')} disabled={!!loading} className="w-full h-14 justify-start gap-3">
+            <Button onClick={() => createOrder('stripe')} disabled={!!loading} className="w-full h-14 justify-start gap-3" variant="outline">
               <CreditCard className="w-6 h-6" />
               <span className="font-semibold">Credit Card · ${total.toFixed(2)}</span>
               {loading === 'stripe' && <Loader2 className="w-4 h-4 animate-spin ml-auto" />}
