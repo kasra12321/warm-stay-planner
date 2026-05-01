@@ -199,6 +199,13 @@ const AdminIAquaLink = () => {
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       const res = data;
+      // The screenlogic-control function wraps Pi failures as
+      // { success: true, status: { status: "Offline", error: "..." } } so the
+      // eco-sync drift logic still runs. For a manual test, treat that as a
+      // failure and show the underlying error instead of a green checkmark.
+      if (res?.status?.status === 'Offline' || res?.status?.response === 'Error') {
+        throw new Error(res.status.error || 'Pool controller is offline');
+      }
       setTestResults((prev) => ({ ...prev, [home.id]: res.status }));
       toast({ title: 'Test successful' });
     } catch (e: any) {
@@ -515,7 +522,7 @@ const AdminIAquaLink = () => {
                       <div className="rounded-md bg-muted p-3 text-xs space-y-1">
                         <div>Pool temp: <span className="font-medium">{status.pool_temp ?? '—'}°F</span></div>
                         <div>Pool set point: <span className="font-medium">{status.pool_set_point ?? '—'}°F</span></div>
-                        <div>Pool heater: <span className="font-medium">{status.pool_heater === '0' ? 'off' : 'on'}</span></div>
+                        <div>Pool heater: <span className="font-medium">{status.pool_heater == null ? '—' : status.pool_heater === '0' ? 'off' : 'on'}</span></div>
                       </div>
                     )}
 
