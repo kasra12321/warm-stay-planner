@@ -269,6 +269,39 @@ export type Database = {
           },
         ]
       }
+      pi_health_state: {
+        Row: {
+          consecutive_failures: number
+          id: string
+          last_alert_sent_at: string | null
+          last_checked_at: string | null
+          last_error: string | null
+          last_status_change_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          consecutive_failures?: number
+          id?: string
+          last_alert_sent_at?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          last_status_change_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          consecutive_failures?: number
+          id?: string
+          last_alert_sent_at?: string | null
+          last_checked_at?: string | null
+          last_error?: string | null
+          last_status_change_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
