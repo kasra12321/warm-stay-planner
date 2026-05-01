@@ -139,6 +139,12 @@ serve(async (req) => {
       }
     }
 
+    // Mark admin as notified so we don't re-send on retries
+    await supabase
+      .from("orders")
+      .update({ admin_notified_at: new Date().toISOString() })
+      .eq("id", orderId);
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
