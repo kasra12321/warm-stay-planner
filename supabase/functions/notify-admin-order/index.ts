@@ -27,6 +27,59 @@ serve(async (req) => {
 
     if (orderErr || !order) throw new Error("Order not found");
 
+    // === Server-side fanout (idempotent) ===
+    // These were previously fired from the guest's browser as fire-and-forget,
+    // which meant if the guest closed the tab right after tapping "I've paid",
+    // the requests would be cancelled and reminders/SMS/receipt would never run.
+    // Doing them here on the server guarantees they complete.
+    const fanout: Promise<unknown>[] = [];
+
+    if (!order.reminders_created_at) {
+      fanout.push(
+        supabase.functions
+          .invoke("create-reminders", { body: { orderId } })
+          .then(async ({ error }) => {
+            if (error) {
+              console.error("fanout: create-reminders failed:", error);
+              return;
+            }
+            await supabase
+              .from("orders")
+              .update({ reminders_created_at: new Date().toISOString() })
+              .eq("id", orderId);
+          })
+          .catch((e) => console.error("fanout: create-reminders threw:", e)),
+      );
+    }
+
+    if (!order.guest_sms_sent_at && order.guest_mobile) {
+      fanout.push(
+        supabase.functions
+          .invoke("send-guest-sms", { body: { orderId } })
+          .then(async ({ error }) => {
+            if (error) {
+              console.error("fanout: send-guest-sms failed:", error);
+              return;
+            }
+            await supabase
+              .from("orders")
+              .update({ guest_sms_sent_at: new Date().toISOString() })
+              .eq("id", orderId);
+          })
+          .catch((e) => console.error("fanout: send-guest-sms threw:", e)),
+      );
+    }
+
+    if (order.guest_email) {
+      fanout.push(
+        supabase.functions
+          .invoke("send-guest-receipt", { body: { orderId } })
+          .catch((e) => console.error("fanout: send-guest-receipt threw:", e)),
+      );
+    }
+
+    await Promise.allSettled(fanout);
+
     const { data: settings } = await supabase.from("settings").select("*").single();
     const home = order.homes as any;
     const homeName = home?.internal_name || home?.name || "Property";
@@ -85,6 +138,12 @@ serve(async (req) => {
         console.error("Admin email error:", e);
       }
     }
+
+    // Mark admin as notified so we don't re-send on retries
+    await supabase
+      .from("orders")
+      .update({ admin_notified_at: new Date().toISOString() })
+      .eq("id", orderId);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

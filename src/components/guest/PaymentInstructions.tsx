@@ -64,12 +64,19 @@ export function PaymentInstructions({
         .eq('id', orderId);
       if (updErr) throw updErr;
 
-      void Promise.allSettled([
-        supabase.functions.invoke('notify-admin-order', { body: { orderId } }),
-        supabase.functions.invoke('create-reminders', { body: { orderId } }),
-        supabase.functions.invoke('send-guest-sms', { body: { orderId } }),
-        supabase.functions.invoke('send-guest-receipt', { body: { orderId } }),
-      ]);
+      // Await the orchestrator so all server-side fanout (reminders, SMS,
+      // receipt, admin email) completes before we navigate away. Previously
+      // these were fire-and-forget from the browser, so closing the tab
+      // could cancel them and leave the order without reminders.
+      const { error: notifyErr } = await supabase.functions.invoke(
+        'notify-admin-order',
+        { body: { orderId } },
+      );
+      if (notifyErr) {
+        // Non-fatal for the guest — order is already marked submitted —
+        // but log so we can investigate.
+        console.error('notify-admin-order failed:', notifyErr);
+      }
 
       const summary: OrderSummary = {
         id: orderId,
