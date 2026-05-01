@@ -522,7 +522,7 @@ const AdminIAquaLink = () => {
                       <div className="rounded-md bg-muted p-3 text-xs space-y-1">
                         <div>Pool temp: <span className="font-medium">{status.pool_temp ?? '—'}°F</span></div>
                         <div>Pool set point: <span className="font-medium">{status.pool_set_point ?? '—'}°F</span></div>
-                        <div>Pool heater: <span className="font-medium">{status.pool_heater === '0' ? 'off' : 'on'}</span></div>
+                        <div>Pool heater: <span className="font-medium">{status.pool_heater == null ? '—' : status.pool_heater === '0' ? 'off' : 'on'}</span></div>
                       </div>
                     )}
 
