@@ -1,0 +1,1 @@
+ALTER TABLE public.orders ADD COLUMN IF NOT EXISTS guest_receipt_sent_at TIMESTAMPTZ;

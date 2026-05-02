@@ -107,7 +107,7 @@ serve(async (req) => {
     }
 
     // 4. Send guest receipt email (best-effort, not idempotency-tracked)
-    if (order.guest_email) {
+    if (order.guest_email && !order.guest_receipt_sent_at) {
       try {
         await supabase.functions.invoke("send-guest-receipt", { body: { orderId } });
         results.guest_receipt = "sent";
@@ -116,7 +116,7 @@ serve(async (req) => {
         results.guest_receipt = `error: ${e?.message || e}`;
       }
     } else {
-      results.guest_receipt = "no_email";
+      results.guest_receipt = order.guest_receipt_sent_at ? "already_done" : "no_email";
     }
 
     return new Response(JSON.stringify({ ok: true, results }), {
