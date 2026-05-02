@@ -70,7 +70,17 @@ serve(async (req) => {
       );
     }
 
-    if (order.guest_email) {
+    // For Stripe orders, finalize-stripe-order is responsible for the
+    // guest receipt (it's the orchestrator on that path). For Venmo /
+    // Zelle / Apple Cash flows, notify-admin-order is the orchestrator
+    // and owns the receipt. The send-guest-receipt function is itself
+    // idempotent via guest_receipt_sent_at, so this is just to avoid
+    // an extra invocation.
+    if (
+      order.guest_email &&
+      !order.guest_receipt_sent_at &&
+      order.payment_method !== "stripe"
+    ) {
       fanout.push(
         supabase.functions
           .invoke("send-guest-receipt", { body: { orderId } })
