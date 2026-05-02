@@ -33,6 +33,16 @@ serve(async (req) => {
       });
     }
 
+    // Idempotency: don't send the receipt twice. Multiple callers
+    // (stripe-webhook → finalize-stripe-order, browser return on /Index,
+    // and the notify-admin-order fanout for non-Stripe flows) can all
+    // race to send this. First one in wins.
+    if ((order as any).guest_receipt_sent_at) {
+      return new Response(JSON.stringify({ skipped: "already_sent" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const { data: settings } = await supabase.from("settings").select("*").single();
 
     const home = order.homes as any;
@@ -129,6 +139,12 @@ serve(async (req) => {
       console.error("Guest receipt email failed:", txt);
       throw new Error(txt);
     }
+
+    // Mark sent so retries / parallel callers don't re-send.
+    await supabase
+      .from("orders")
+      .update({ guest_receipt_sent_at: new Date().toISOString() })
+      .eq("id", orderId);
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
