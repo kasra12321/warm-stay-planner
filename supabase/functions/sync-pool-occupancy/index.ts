@@ -188,7 +188,16 @@ serve(async (req) => {
     const changes: Array<{ home: string; from: string | null; to: string; temp: number; reason: string }> = [];
     const errors: Array<{ home: string; error: string }> = [];
 
-    for (const home of homes || []) {
+    // Stagger calls between homes so we don't hammer the Pi (which bridges all
+    // ScreenLogic homes through a single TCP connection per pool). 20s gap is
+    // enough breathing room without making the whole sync run too long.
+    const STAGGER_MS = 20_000;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const homesList = homes || [];
+    for (let i = 0; i < homesList.length; i++) {
+      const home = homesList[i];
+      if (i > 0) await sleep(STAGGER_MS);
       try {
         // Dispatch the right controller. iAquaLink homes still need a serial;
         // ScreenLogic homes need a system name. Skip homes that have neither so
