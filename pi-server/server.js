@@ -12,11 +12,11 @@
  *
  * Endpoints:
  *   GET  /healthz                  → { ok: true, uptime, cached_systems }
- *   POST /api/pool/status          → { success, status: { pool_temp, pool_set_point, pool_heater, ... } }
+ *   POST /api/pool/status          → { success, status: { pool_temp, ..., circuits[] } }
  *   POST /api/pool/heater          → { success, actual_temp, verified }
- *
- * Body (status + heater):
- *   { systemName: "Pentair: 12-AB-CD", password: "1234", temp?: 82 }
+ *   POST /api/pool/circuits        → { success, circuits[] }
+ *   POST /api/pool/circuit         → { success, verified, actual_state, status }
+ *   POST /api/pool/raw             → DEBUG: dumps raw equip + config + circuit defs + custom names
  */
 
 const express = require("express");
@@ -35,30 +35,23 @@ if (!AUTH_TOKEN) {
 const app = express();
 app.use(express.json({ limit: "32kb" }));
 
-// Request logger — shows every incoming request so we can confirm the cloud
-// is actually reaching the Pi.
 app.use((req, _res, next) => {
   console.log(`[req] ${req.method} ${req.path} from ${req.ip} systemName=${req.body?.systemName || "-"}`);
   next();
 });
 
-// ─── System name normalization ───────────────────────────────────────────
-// Pentair's dispatcher requires "Pentair: XX-XX-XX" (uppercase hex). Accept
-// loose input from upstream callers and coerce; return null if invalid.
 function normalizeSystemName(input) {
   if (!input) return null;
   let s = String(input).trim();
   s = s.replace(/^pentair\s*:\s*/i, "");
-  s = s.replace(/O/gi, "0"); // O → 0 typo
+  s = s.replace(/O/gi, "0");
   const hex = s.replace(/[^0-9A-Fa-f]/g, "").toUpperCase();
   if (hex.length !== 6) return null;
   return `Pentair: ${hex.slice(0, 2)}-${hex.slice(2, 4)}-${hex.slice(4, 6)}`;
 }
 
-// ─── Auth ────────────────────────────────────────────────────────────────
 app.use((req, res, next) => {
   if (req.path === "/healthz" && req.method === "GET") {
-    // Allow unauthed health for tunnel diagnostics, but only return uptime.
     return next();
   }
   const header = req.headers.authorization || "";
@@ -69,8 +62,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Connection cache ────────────────────────────────────────────────────
-// Map<systemName, { client, expiresAt, password }>
 const connections = new Map();
 
 async function getClient(systemName, password) {
@@ -78,7 +69,6 @@ async function getClient(systemName, password) {
   if (cached && cached.expiresAt > Date.now() && cached.password === password) {
     return cached.client;
   }
-  // Tear down stale entry
   if (cached) {
     try { cached.client.close(); } catch {}
     connections.delete(systemName);
@@ -102,7 +92,6 @@ async function getClient(systemName, password) {
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
   await client.connectAsync();
 
-  // Drop the cache entry if the underlying socket dies
   client.on?.("close", () => connections.delete(systemName));
   client.on?.("error", () => connections.delete(systemName));
 
@@ -114,26 +103,23 @@ async function getClient(systemName, password) {
   return client;
 }
 
-/**
- * Pull current pool/spa temperatures + heater state from a connected client.
- * Shape mirrors what the cloud `screenlogic-control` function returns to
- * keep parity with the iAquaLink interface used by the rest of the app.
- */
 async function fetchStatus(client) {
-  // NOTE: getControllerConfigAsync also lives on `client.equipment`, NOT
-  // `client.controller` (which is the outgoing-message command bag). Calling
-  // `client.controller.getControllerConfigAsync()` throws "is not a function"
-  // and crashes the request, which is why Cloudflare was returning HTML 502s.
-  // We don't actually use the controller config, so just fetch equipment state.
   const equip = await client.equipment.getEquipmentStateAsync();
 
-  // node-screenlogic surfaces bodies as an array; index 0 is typically pool, 1 spa.
   const bodies = equip?.bodies || equip?.bodyArray || [];
   const pool = bodies[0] || {};
   const spa = bodies[1] || {};
 
-  // heatStatus: 0 off, non-zero = heating
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
+
+  const rawCircuits = equip?.circuitArray || equip?.circuits || [];
+  const circuits = rawCircuits.map((c) => ({
+    id: c.id ?? c.circuitId ?? null,
+    name: (c.name || c.friendlyName || "").trim(),
+    state: c.state === 1 || c.state === true || c.state === "1",
+    function: c.function ?? c.functionCode ?? null,
+    interface: c.interface ?? null,
+  })).filter((c) => c.id !== null);
 
   return {
     pool_temp: pool.currentTemp ?? pool.currentTemperature ?? pool.lastTemperature ?? null,
@@ -143,25 +129,23 @@ async function fetchStatus(client) {
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
     air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
+    circuits,
     raw: { equip },
   };
 }
 
-// ─── Routes ──────────────────────────────────────────────────────────────
 app.get("/healthz", (_req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
     cached_systems: connections.size,
-    version: "1.0.0",
+    version: "1.2.0",
   });
 });
 
 app.post("/api/pool/status", async (req, res) => {
   const { systemName: rawName, password } = req.body || {};
-  if (!rawName) {
-    return res.status(400).json({ error: "systemName required" });
-  }
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
   const systemName = normalizeSystemName(rawName);
   if (!systemName) {
     return res.status(400).json({
@@ -181,9 +165,7 @@ app.post("/api/pool/status", async (req, res) => {
 
 app.post("/api/pool/heater", async (req, res) => {
   const { systemName: rawName, password, temp, body: bodyType = "pool" } = req.body || {};
-  if (!rawName) {
-    return res.status(400).json({ error: "systemName required" });
-  }
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
   const systemName = normalizeSystemName(rawName);
   if (!systemName) {
     return res.status(400).json({
@@ -196,15 +178,12 @@ app.post("/api/pool/heater", async (req, res) => {
   }
   try {
     const client = await getClient(systemName, password ?? "");
-    // bodyType: 0 = pool, 1 = spa
     const bodyId = bodyType === "spa" ? 1 : 0;
     await client.bodies.setSetPointAsync(bodyId, t);
 
-    // Verify by re-reading after a short delay
     await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
     const status = await fetchStatus(client);
-    const actual =
-      bodyId === 0 ? status.pool_set_point : status.spa_set_point;
+    const actual = bodyId === 0 ? status.pool_set_point : status.spa_set_point;
     const verified = Number(actual) === t;
 
     res.json({
@@ -220,12 +199,112 @@ app.post("/api/pool/heater", async (req, res) => {
   }
 });
 
-// ─── Boot ────────────────────────────────────────────────────────────────
+app.post("/api/pool/circuits", async (req, res) => {
+  const { systemName: rawName, password } = req.body || {};
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
+  }
+  try {
+    const client = await getClient(systemName, password ?? "");
+    const status = await fetchStatus(client);
+    res.json({ success: true, circuits: status.circuits });
+  } catch (e) {
+    console.error(`circuits ${systemName}:`, e.message);
+    connections.delete(systemName);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+app.post("/api/pool/circuit", async (req, res) => {
+  const { systemName: rawName, password, circuitId, on } = req.body || {};
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
+  }
+  const cid = Number(circuitId);
+  if (!Number.isInteger(cid) || cid < 1 || cid > 999) {
+    return res.status(400).json({ error: "circuitId must be a positive integer" });
+  }
+  if (typeof on !== "boolean") {
+    return res.status(400).json({ error: "`on` must be true or false" });
+  }
+  try {
+    const client = await getClient(systemName, password ?? "");
+    await client.circuits.setCircuitStateAsync(cid, on);
+
+    await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+    const status = await fetchStatus(client);
+    const found = status.circuits.find((c) => c.id === cid);
+    const verified = !!found && found.state === on;
+
+    res.json({
+      success: true,
+      circuit_id: cid,
+      desired_state: on,
+      actual_state: found?.state ?? null,
+      verified,
+      status,
+    });
+  } catch (e) {
+    console.error(`circuit ${systemName} ${cid}=${on}:`, e.message);
+    connections.delete(systemName);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// DEBUG endpoint — dumps every relevant call so we can find where the
+// circuit names actually live in this firmware's response.
+app.post("/api/pool/raw", async (req, res) => {
+  const { systemName: rawName, password } = req.body || {};
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) return res.status(400).json({ error: "bad systemName" });
+  try {
+    const client = await getClient(systemName, password ?? "");
+
+    const equip = await client.equipment.getEquipmentStateAsync();
+
+    let config = null, configError = null;
+    try {
+      config = await client.equipment.getControllerConfigAsync();
+    } catch (e) { configError = e.message; }
+
+    let circuitDefs = null, circuitDefsError = null;
+    try {
+      circuitDefs = await client.equipment.getCircuitDefinitionsAsync();
+    } catch (e) { circuitDefsError = e.message; }
+
+    let customNames = null, customNamesError = null;
+    try {
+      customNames = await client.equipment.getCustomNamesAsync();
+    } catch (e) { customNamesError = e.message; }
+
+    res.json({
+      success: true,
+      equip,
+      config,
+      configError,
+      circuitDefs,
+      circuitDefsError,
+      customNames,
+      customNamesError,
+    });
+  } catch (e) {
+    connections.delete(systemName);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`pool-pi listening on :${PORT}`);
 });
 
-// Graceful shutdown — close every cached ScreenLogic connection
 function shutdown() {
   console.log("shutting down, closing pool connections…");
   for (const [name, entry] of connections.entries()) {
