@@ -7,16 +7,19 @@
  * directly. This server proxies those calls so they originate from the Pi's
  * residential IP.
  *
- * Auth: Bearer token in `Authorization: Bearer <PI_AUTH_TOKEN>` header,
- * matching the SCREENLOGIC_PI_AUTH_TOKEN secret stored in the cloud project.
+ * Auth: Bearer token in `Authorization: Bearer <PI_AUTH_TOKEN>` header.
  *
  * Endpoints:
- *   GET  /healthz                  → { ok: true, uptime, cached_systems }
- *   POST /api/pool/status          → { success, status: { pool_temp, ..., circuits[] } }
- *   POST /api/pool/heater          → { success, actual_temp, verified }
- *   POST /api/pool/circuits        → { success, circuits[] }
- *   POST /api/pool/circuit         → { success, verified, actual_state, status }
- *   POST /api/pool/raw             → DEBUG: dumps raw equip + config + circuit defs + custom names
+ *   GET  /healthz                  → uptime + version
+ *   POST /api/pool/status          → temps, heater state, AND named circuits
+ *   POST /api/pool/heater          → set heater target temp
+ *   POST /api/pool/circuits        → list named circuits
+ *   POST /api/pool/circuit         → toggle a single circuit
+ *   POST /api/pool/raw             → DEBUG: dumps full equip + config
+ *
+ * Implementation note: ScreenLogic returns LIVE state (which circuits are on/off)
+ * via getEquipmentStateAsync(), and CONFIG (circuit names + roles) via
+ * getControllerConfigAsync(). Neither alone has both. We merge them.
  */
 
 const express = require("express");
@@ -26,6 +29,12 @@ const PORT = parseInt(process.env.PORT || "8787", 10);
 const AUTH_TOKEN = process.env.PI_AUTH_TOKEN;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const VERIFY_DELAY_MS = 1500;
+
+// Cache controller config per system. Config (circuit names, layout) only
+// changes when the operator reconfigures their Pentair install — once an hour
+// is plenty.
+const CONFIG_CACHE_TTL_MS = 60 * 60 * 1000;
+const configCache = new Map(); // Map<systemName, { config, expiresAt }>
 
 if (!AUTH_TOKEN) {
   console.error("FATAL: PI_AUTH_TOKEN env var is required");
@@ -92,8 +101,14 @@ async function getClient(systemName, password) {
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
   await client.connectAsync();
 
-  client.on?.("close", () => connections.delete(systemName));
-  client.on?.("error", () => connections.delete(systemName));
+  client.on?.("close", () => {
+    connections.delete(systemName);
+    configCache.delete(systemName);
+  });
+  client.on?.("error", () => {
+    connections.delete(systemName);
+    configCache.delete(systemName);
+  });
 
   connections.set(systemName, {
     client,
@@ -103,23 +118,79 @@ async function getClient(systemName, password) {
   return client;
 }
 
-async function fetchStatus(client) {
+/**
+ * Fetch (and cache) the controller config. This is what gives us circuit
+ * names, function codes, and interface placement.
+ */
+async function getConfig(systemName, client) {
+  const hit = configCache.get(systemName);
+  if (hit && hit.expiresAt > Date.now()) return hit.config;
+
+  const config = await client.equipment.getControllerConfigAsync();
+  configCache.set(systemName, {
+    config,
+    expiresAt: Date.now() + CONFIG_CACHE_TTL_MS,
+  });
+  return config;
+}
+
+/**
+ * Merge live circuit state (from getEquipmentStateAsync) with config metadata
+ * (from getControllerConfigAsync). Returns one entry per circuit with id,
+ * name, current state, and useful metadata for the cloud's mapping UI.
+ */
+function buildCircuits(equip, config) {
+  const stateById = new Map();
+  const liveCircuits = equip?.circuitArray || equip?.circuits || [];
+  for (const c of liveCircuits) {
+    const id = c.id ?? c.circuitId;
+    if (id == null) continue;
+    stateById.set(id, c.state === 1 || c.state === true || c.state === "1");
+  }
+
+  const configCircuits = config?.circuitArray || config?.circuits || [];
+  const merged = [];
+  for (const c of configCircuits) {
+    const id = c.circuitId ?? c.id;
+    if (id == null) continue;
+    merged.push({
+      id,
+      name: (c.name || "").trim(),
+      state: stateById.has(id) ? stateById.get(id) : false,
+      function: typeof c.function === "number" ? c.function : null,
+      interface: typeof c.interface === "number" ? c.interface : null,
+      // Helpful flag — whether this circuit appears in live equipment state.
+      // If false, the operator may have configured it but it's not currently
+      // wired/active.
+      live: stateById.has(id),
+    });
+  }
+
+  // Fallback: if config gave us nothing for some reason, surface live entries
+  // by id alone. Names will be empty but at least IDs/state are correct.
+  if (merged.length === 0) {
+    for (const [id, state] of stateById.entries()) {
+      merged.push({ id, name: "", state, function: null, interface: null, live: true });
+    }
+  }
+
+  return merged;
+}
+
+async function fetchStatus(client, systemName) {
   const equip = await client.equipment.getEquipmentStateAsync();
+  let config = null;
+  try {
+    config = await getConfig(systemName, client);
+  } catch (e) {
+    // If config fetch fails, we still return circuits from live state (no names)
+    console.error(`config fetch failed for ${systemName}: ${e.message}`);
+  }
 
   const bodies = equip?.bodies || equip?.bodyArray || [];
   const pool = bodies[0] || {};
   const spa = bodies[1] || {};
-
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
-
-  const rawCircuits = equip?.circuitArray || equip?.circuits || [];
-  const circuits = rawCircuits.map((c) => ({
-    id: c.id ?? c.circuitId ?? null,
-    name: (c.name || c.friendlyName || "").trim(),
-    state: c.state === 1 || c.state === true || c.state === "1",
-    function: c.function ?? c.functionCode ?? null,
-    interface: c.interface ?? null,
-  })).filter((c) => c.id !== null);
 
   return {
     pool_temp: pool.currentTemp ?? pool.currentTemperature ?? pool.lastTemperature ?? null,
@@ -129,7 +200,7 @@ async function fetchStatus(client) {
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
     air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
-    circuits,
+    circuits: buildCircuits(equip, config),
     raw: { equip },
   };
 }
@@ -139,7 +210,8 @@ app.get("/healthz", (_req, res) => {
     ok: true,
     uptime: process.uptime(),
     cached_systems: connections.size,
-    version: "1.2.0",
+    cached_configs: configCache.size,
+    version: "1.3.0",
   });
 });
 
@@ -154,11 +226,12 @@ app.post("/api/pool/status", async (req, res) => {
   }
   try {
     const client = await getClient(systemName, password ?? "");
-    const status = await fetchStatus(client);
+    const status = await fetchStatus(client, systemName);
     res.json({ success: true, status });
   } catch (e) {
     console.error(`status ${systemName}:`, e.message);
     connections.delete(systemName);
+    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -182,7 +255,7 @@ app.post("/api/pool/heater", async (req, res) => {
     await client.bodies.setSetPointAsync(bodyId, t);
 
     await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-    const status = await fetchStatus(client);
+    const status = await fetchStatus(client, systemName);
     const actual = bodyId === 0 ? status.pool_set_point : status.spa_set_point;
     const verified = Number(actual) === t;
 
@@ -195,6 +268,7 @@ app.post("/api/pool/heater", async (req, res) => {
   } catch (e) {
     console.error(`heater ${systemName}:`, e.message);
     connections.delete(systemName);
+    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -210,11 +284,12 @@ app.post("/api/pool/circuits", async (req, res) => {
   }
   try {
     const client = await getClient(systemName, password ?? "");
-    const status = await fetchStatus(client);
+    const status = await fetchStatus(client, systemName);
     res.json({ success: true, circuits: status.circuits });
   } catch (e) {
     console.error(`circuits ${systemName}:`, e.message);
     connections.delete(systemName);
+    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -240,7 +315,7 @@ app.post("/api/pool/circuit", async (req, res) => {
     await client.circuits.setCircuitStateAsync(cid, on);
 
     await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-    const status = await fetchStatus(client);
+    const status = await fetchStatus(client, systemName);
     const found = status.circuits.find((c) => c.id === cid);
     const verified = !!found && found.state === on;
 
@@ -255,12 +330,13 @@ app.post("/api/pool/circuit", async (req, res) => {
   } catch (e) {
     console.error(`circuit ${systemName} ${cid}=${on}:`, e.message);
     connections.delete(systemName);
+    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
 
-// DEBUG endpoint — dumps every relevant call so we can find where the
-// circuit names actually live in this firmware's response.
+// DEBUG endpoint — dumps everything we read from the controller. Useful for
+// diagnosing new firmwares or unexpected setups.
 app.post("/api/pool/raw", async (req, res) => {
   const { systemName: rawName, password } = req.body || {};
   const systemName = normalizeSystemName(rawName);
@@ -297,6 +373,7 @@ app.post("/api/pool/raw", async (req, res) => {
     });
   } catch (e) {
     connections.delete(systemName);
+    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -311,6 +388,7 @@ function shutdown() {
     try { entry.client.close(); } catch {}
     connections.delete(name);
   }
+  configCache.clear();
   process.exit(0);
 }
 process.on("SIGTERM", shutdown);
