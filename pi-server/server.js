@@ -1,29 +1,16 @@
 /**
  * Pool Heat — Raspberry Pi bridge server
  *
- * Runs on a Raspberry Pi at a residential address. Pentair's RemoteLogin
- * dispatcher (screenlogicserver.pentair.com:500) silently rejects requests
- * from datacenter IPs, so the Lovable cloud backend cannot talk to it
- * directly. This server proxies those calls so they originate from the Pi's
- * residential IP.
- *
- * Auth: Bearer token in `Authorization: Bearer <PI_AUTH_TOKEN>` header.
- *
- * Endpoints:
- *   GET  /healthz                  → uptime + version
- *   POST /api/pool/status          → temps, heater state, AND named circuits
- *   POST /api/pool/heater          → set heater target temp
- *   POST /api/pool/circuits        → list named circuits
- *   POST /api/pool/circuit         → toggle a single circuit
- *   POST /api/pool/raw             → DEBUG: dumps full equip + config
- *
- * Connection management note (v1.4): node-screenlogic 2.x leaks event
- * listeners on a UnitConnection across repeated calls — repeated reads of
- * the same connection eventually exhaust listener limits and hang. The
- * previous 5-minute connection cache was running into this in production.
- * v1.4 opens a fresh connection per request and closes it deterministically
- * before responding. The Supabase-side 30s response cache absorbs most of
- * the perf cost.
+ * Connection management note (v1.5):
+ *   v1.4 opened a fresh connection per request to fix a listener-leak bug,
+ *   but rapid back-to-back requests to the same system started getting rate
+ *   limited by Pentair's dispatcher (too many handshakes-per-minute).
+ *   v1.5 adds:
+ *     - 60-second connection cache (short enough to avoid listener leaks)
+ *     - per-system mutex so concurrent requests for the same property
+ *       queue instead of opening parallel handshakes
+ *     - explicit listener-count check before reusing a cached connection,
+ *       discarding it if listeners have started accumulating
  */
 
 const express = require("express");
@@ -33,6 +20,8 @@ const PORT = parseInt(process.env.PORT || "8787", 10);
 const AUTH_TOKEN = process.env.PI_AUTH_TOKEN;
 const VERIFY_DELAY_MS = 1500;
 const REQUEST_TIMEOUT_MS = 25_000;
+const CONNECTION_CACHE_TTL_MS = 60_000;
+const MAX_LISTENERS_BEFORE_RECYCLE = 5;
 
 if (!AUTH_TOKEN) {
   console.error("FATAL: PI_AUTH_TOKEN env var is required");
@@ -67,19 +56,35 @@ app.use((req, res, next) => {
   next();
 });
 
-/**
- * Wrap a UnitConnection's lifecycle so the caller doesn't have to remember
- * to close it. We do gateway lookup → connect → run handler → close, with
- * a hard timeout in case anything in node-screenlogic hangs.
- *
- * Each call to this function opens a fresh connection. There's no caching.
- * This is deliberate — node-screenlogic 2.x leaks listeners on reused
- * connections and eventually starts hanging. Fresh-per-request is reliable.
- */
-async function withConnection(systemName, password, handler) {
-  const startedAt = Date.now();
+// ─── Connection cache + per-system mutex ──────────────────────────────────
+//
+// connections: Map<systemName, { client, password, expiresAt }>
+//   - 60s TTL — short enough that listener leaks can't really build up
+//   - listener-count check before reuse: if any event has 5+ listeners,
+//     we tear down and start fresh
+//
+// locks: Map<systemName, Promise>
+//   - one in-flight request per system at a time
+//   - second concurrent request waits for the first to finish before
+//     attempting its own handshake (prevents Pentair throttling)
+const connections = new Map();
+const locks = new Map();
 
-  // Step 1: gateway lookup (RemoteLogin)
+function listenerCountTooHigh(client) {
+  if (!client || typeof client.eventNames !== "function") return false;
+  for (const evt of client.eventNames()) {
+    if (client.listenerCount(evt) >= MAX_LISTENERS_BEFORE_RECYCLE) return true;
+  }
+  return false;
+}
+
+function disposeClient(client) {
+  if (!client) return;
+  try { client.removeAllListeners?.(); } catch {}
+  try { client.close(); } catch {}
+}
+
+async function openConnection(systemName, password) {
   const gateway = new RemoteLogin(systemName);
   let gatewayData;
   try {
@@ -97,7 +102,6 @@ async function withConnection(systemName, password, handler) {
     );
   }
 
-  // Step 2: connect to the actual unit
   const client = new UnitConnection();
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
   try {
@@ -106,12 +110,63 @@ async function withConnection(systemName, password, handler) {
       new Promise((_, rej) => setTimeout(() => rej(new Error("unit connect timeout")), 10_000)),
     ]);
   } catch (e) {
-    try { client.close(); } catch {}
+    disposeClient(client);
     throw e;
   }
 
-  // Step 3: run the caller's handler with a hard timeout
+  return client;
+}
+
+async function getOrOpenClient(systemName, password) {
+  const cached = connections.get(systemName);
+  if (cached && cached.expiresAt > Date.now() && cached.password === password) {
+    if (listenerCountTooHigh(cached.client)) {
+      console.log(`[recycle] ${systemName} (listener accumulation)`);
+      disposeClient(cached.client);
+      connections.delete(systemName);
+    } else {
+      // Extend TTL on each successful reuse, capped — popular systems stay warm.
+      cached.expiresAt = Date.now() + CONNECTION_CACHE_TTL_MS;
+      return cached.client;
+    }
+  } else if (cached) {
+    // Expired or password changed
+    disposeClient(cached.client);
+    connections.delete(systemName);
+  }
+
+  const client = await openConnection(systemName, password);
+  connections.set(systemName, {
+    client,
+    password,
+    expiresAt: Date.now() + CONNECTION_CACHE_TTL_MS,
+  });
+  return client;
+}
+
+/**
+ * Run handler against a connection for the given system. Serialized per
+ * system: a second concurrent call for the same systemName waits for the
+ * first to finish. Across different systemNames, calls run in parallel.
+ *
+ * On any error inside the handler, the connection is discarded (not reused).
+ * On success, the connection stays in the cache for the next caller.
+ */
+async function withConnection(systemName, password, handler) {
+  // Wait for any in-flight request on the same system
+  const prev = locks.get(systemName);
+  if (prev) {
+    try { await prev; } catch {}
+  }
+
+  let resolveLock, rejectLock;
+  const lock = new Promise((res, rej) => { resolveLock = res; rejectLock = rej; });
+  locks.set(systemName, lock);
+
+  const startedAt = Date.now();
+  let client;
   try {
+    client = await getOrOpenClient(systemName, password);
     const result = await Promise.race([
       handler(client),
       new Promise((_, rej) =>
@@ -120,18 +175,26 @@ async function withConnection(systemName, password, handler) {
     ]);
     const elapsed = Date.now() - startedAt;
     console.log(`[ok] ${systemName} (${elapsed}ms)`);
+    resolveLock();
     return result;
+  } catch (e) {
+    // Drop the connection on error — it may be in a bad state
+    if (client) {
+      const cached = connections.get(systemName);
+      if (cached && cached.client === client) {
+        connections.delete(systemName);
+      }
+      disposeClient(client);
+    }
+    rejectLock(e);
+    throw e;
   } finally {
-    // Step 4: ALWAYS close, even on error. Leaving connections open is
-    // what was causing the listener-leak issue.
-    try { client.close(); } catch {}
+    // Only clear the lock if it's still ours (a later request may have
+    // replaced it after our reject — unlikely but cheap to guard against)
+    if (locks.get(systemName) === lock) locks.delete(systemName);
   }
 }
 
-/**
- * Fetch the controller config (circuit names + roles) and merge with live
- * state (which circuits are currently on/off) into one normalized object.
- */
 async function fetchStatus(client) {
   const [equip, config] = await Promise.all([
     client.equipment.getEquipmentStateAsync(),
@@ -146,7 +209,6 @@ async function fetchStatus(client) {
   const spa = bodies[1] || {};
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
 
-  // Merge live circuit state with config metadata
   const stateById = new Map();
   for (const c of equip?.circuitArray || equip?.circuits || []) {
     const id = c.id ?? c.circuitId;
@@ -168,7 +230,6 @@ async function fetchStatus(client) {
     });
   }
 
-  // Fallback if config gave nothing — return live entries with empty names
   if (circuits.length === 0) {
     for (const [id, state] of stateById.entries()) {
       circuits.push({ id, name: "", state, function: null, interface: null, live: true });
@@ -193,7 +254,9 @@ app.get("/healthz", (_req, res) => {
     ok: true,
     uptime: process.uptime(),
     memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
-    version: "1.4.0",
+    cached_connections: connections.size,
+    in_flight_locks: locks.size,
+    version: "1.5.0",
   });
 });
 
@@ -317,22 +380,15 @@ app.post("/api/pool/raw", async (req, res) => {
   try {
     const result = await withConnection(systemName, password ?? "", async (client) => {
       const equip = await client.equipment.getEquipmentStateAsync();
-
       let config = null, configError = null;
-      try {
-        config = await client.equipment.getControllerConfigAsync();
-      } catch (e) { configError = e.message; }
-
+      try { config = await client.equipment.getControllerConfigAsync(); }
+      catch (e) { configError = e.message; }
       let circuitDefs = null, circuitDefsError = null;
-      try {
-        circuitDefs = await client.equipment.getCircuitDefinitionsAsync();
-      } catch (e) { circuitDefsError = e.message; }
-
+      try { circuitDefs = await client.equipment.getCircuitDefinitionsAsync(); }
+      catch (e) { circuitDefsError = e.message; }
       let customNames = null, customNamesError = null;
-      try {
-        customNames = await client.equipment.getCustomNamesAsync();
-      } catch (e) { customNamesError = e.message; }
-
+      try { customNames = await client.equipment.getCustomNamesAsync(); }
+      catch (e) { customNamesError = e.message; }
       return { equip, config, configError, circuitDefs, circuitDefsError, customNames, customNamesError };
     });
     res.json({ success: true, ...result });
@@ -347,6 +403,10 @@ app.listen(PORT, () => {
 
 function shutdown() {
   console.log("shutting down…");
+  for (const [name, entry] of connections.entries()) {
+    disposeClient(entry.client);
+    connections.delete(name);
+  }
   process.exit(0);
 }
 process.on("SIGTERM", shutdown);
