@@ -17,9 +17,13 @@
  *   POST /api/pool/circuit         → toggle a single circuit
  *   POST /api/pool/raw             → DEBUG: dumps full equip + config
  *
- * Implementation note: ScreenLogic returns LIVE state (which circuits are on/off)
- * via getEquipmentStateAsync(), and CONFIG (circuit names + roles) via
- * getControllerConfigAsync(). Neither alone has both. We merge them.
+ * Connection management note (v1.4): node-screenlogic 2.x leaks event
+ * listeners on a UnitConnection across repeated calls — repeated reads of
+ * the same connection eventually exhaust listener limits and hang. The
+ * previous 5-minute connection cache was running into this in production.
+ * v1.4 opens a fresh connection per request and closes it deterministically
+ * before responding. The Supabase-side 30s response cache absorbs most of
+ * the perf cost.
  */
 
 const express = require("express");
@@ -27,14 +31,8 @@ const { RemoteLogin, UnitConnection } = require("node-screenlogic");
 
 const PORT = parseInt(process.env.PORT || "8787", 10);
 const AUTH_TOKEN = process.env.PI_AUTH_TOKEN;
-const CACHE_TTL_MS = 5 * 60 * 1000;
 const VERIFY_DELAY_MS = 1500;
-
-// Cache controller config per system. Config (circuit names, layout) only
-// changes when the operator reconfigures their Pentair install — once an hour
-// is plenty.
-const CONFIG_CACHE_TTL_MS = 60 * 60 * 1000;
-const configCache = new Map(); // Map<systemName, { config, expiresAt }>
+const REQUEST_TIMEOUT_MS = 25_000;
 
 if (!AUTH_TOKEN) {
   console.error("FATAL: PI_AUTH_TOKEN env var is required");
@@ -60,9 +58,7 @@ function normalizeSystemName(input) {
 }
 
 app.use((req, res, next) => {
-  if (req.path === "/healthz" && req.method === "GET") {
-    return next();
-  }
+  if (req.path === "/healthz" && req.method === "GET") return next();
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
   if (token !== AUTH_TOKEN) {
@@ -71,126 +67,113 @@ app.use((req, res, next) => {
   next();
 });
 
-const connections = new Map();
+/**
+ * Wrap a UnitConnection's lifecycle so the caller doesn't have to remember
+ * to close it. We do gateway lookup → connect → run handler → close, with
+ * a hard timeout in case anything in node-screenlogic hangs.
+ *
+ * Each call to this function opens a fresh connection. There's no caching.
+ * This is deliberate — node-screenlogic 2.x leaks listeners on reused
+ * connections and eventually starts hanging. Fresh-per-request is reliable.
+ */
+async function withConnection(systemName, password, handler) {
+  const startedAt = Date.now();
 
-async function getClient(systemName, password) {
-  const cached = connections.get(systemName);
-  if (cached && cached.expiresAt > Date.now() && cached.password === password) {
-    return cached.client;
-  }
-  if (cached) {
-    try { cached.client.close(); } catch {}
-    connections.delete(systemName);
-  }
-
+  // Step 1: gateway lookup (RemoteLogin)
   const gateway = new RemoteLogin(systemName);
   let gatewayData;
   try {
-    gatewayData = await gateway.connectAsync();
+    gatewayData = await Promise.race([
+      gateway.connectAsync(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("gateway timeout")), 10_000)),
+    ]);
   } finally {
     try { await gateway.closeAsync(); } catch {}
   }
   if (!gatewayData || !gatewayData.gatewayFound) {
     throw new Error(
       `Gateway not found for ${systemName}. Pentair dispatcher returned gatewayFound=false. ` +
-        "Check the system name and confirm this Pi has a residential IP.",
+        "Check the system name and confirm this property's ScreenLogic adapter is online.",
     );
   }
 
+  // Step 2: connect to the actual unit
   const client = new UnitConnection();
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
-  await client.connectAsync();
-
-  client.on?.("close", () => {
-    connections.delete(systemName);
-    configCache.delete(systemName);
-  });
-  client.on?.("error", () => {
-    connections.delete(systemName);
-    configCache.delete(systemName);
-  });
-
-  connections.set(systemName, {
-    client,
-    password,
-    expiresAt: Date.now() + CACHE_TTL_MS,
-  });
-  return client;
-}
-
-/**
- * Fetch (and cache) the controller config. This is what gives us circuit
- * names, function codes, and interface placement.
- */
-async function getConfig(systemName, client) {
-  const hit = configCache.get(systemName);
-  if (hit && hit.expiresAt > Date.now()) return hit.config;
-
-  const config = await client.equipment.getControllerConfigAsync();
-  configCache.set(systemName, {
-    config,
-    expiresAt: Date.now() + CONFIG_CACHE_TTL_MS,
-  });
-  return config;
-}
-
-/**
- * Merge live circuit state (from getEquipmentStateAsync) with config metadata
- * (from getControllerConfigAsync). Returns one entry per circuit with id,
- * name, current state, and useful metadata for the cloud's mapping UI.
- */
-function buildCircuits(equip, config) {
-  const stateById = new Map();
-  const liveCircuits = equip?.circuitArray || equip?.circuits || [];
-  for (const c of liveCircuits) {
-    const id = c.id ?? c.circuitId;
-    if (id == null) continue;
-    stateById.set(id, c.state === 1 || c.state === true || c.state === "1");
-  }
-
-  const configCircuits = config?.circuitArray || config?.circuits || [];
-  const merged = [];
-  for (const c of configCircuits) {
-    const id = c.circuitId ?? c.id;
-    if (id == null) continue;
-    merged.push({
-      id,
-      name: (c.name || "").trim(),
-      state: stateById.has(id) ? stateById.get(id) : false,
-      function: typeof c.function === "number" ? c.function : null,
-      interface: typeof c.interface === "number" ? c.interface : null,
-      // Helpful flag — whether this circuit appears in live equipment state.
-      // If false, the operator may have configured it but it's not currently
-      // wired/active.
-      live: stateById.has(id),
-    });
-  }
-
-  // Fallback: if config gave us nothing for some reason, surface live entries
-  // by id alone. Names will be empty but at least IDs/state are correct.
-  if (merged.length === 0) {
-    for (const [id, state] of stateById.entries()) {
-      merged.push({ id, name: "", state, function: null, interface: null, live: true });
-    }
-  }
-
-  return merged;
-}
-
-async function fetchStatus(client, systemName) {
-  const equip = await client.equipment.getEquipmentStateAsync();
-  let config = null;
   try {
-    config = await getConfig(systemName, client);
+    await Promise.race([
+      client.connectAsync(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("unit connect timeout")), 10_000)),
+    ]);
   } catch (e) {
-    // If config fetch fails, we still return circuits from live state (no names)
-    console.error(`config fetch failed for ${systemName}: ${e.message}`);
+    try { client.close(); } catch {}
+    throw e;
   }
+
+  // Step 3: run the caller's handler with a hard timeout
+  try {
+    const result = await Promise.race([
+      handler(client),
+      new Promise((_, rej) =>
+        setTimeout(() => rej(new Error("handler timeout")), REQUEST_TIMEOUT_MS),
+      ),
+    ]);
+    const elapsed = Date.now() - startedAt;
+    console.log(`[ok] ${systemName} (${elapsed}ms)`);
+    return result;
+  } finally {
+    // Step 4: ALWAYS close, even on error. Leaving connections open is
+    // what was causing the listener-leak issue.
+    try { client.close(); } catch {}
+  }
+}
+
+/**
+ * Fetch the controller config (circuit names + roles) and merge with live
+ * state (which circuits are currently on/off) into one normalized object.
+ */
+async function fetchStatus(client) {
+  const [equip, config] = await Promise.all([
+    client.equipment.getEquipmentStateAsync(),
+    client.equipment.getControllerConfigAsync().catch((e) => {
+      console.error(`config fetch failed: ${e.message}`);
+      return null;
+    }),
+  ]);
 
   const bodies = equip?.bodies || equip?.bodyArray || [];
   const pool = bodies[0] || {};
   const spa = bodies[1] || {};
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
+
+  // Merge live circuit state with config metadata
+  const stateById = new Map();
+  for (const c of equip?.circuitArray || equip?.circuits || []) {
+    const id = c.id ?? c.circuitId;
+    if (id != null) stateById.set(id, c.state === 1 || c.state === true || c.state === "1");
+  }
+
+  const circuits = [];
+  const configCircuits = config?.circuitArray || config?.circuits || [];
+  for (const c of configCircuits) {
+    const id = c.circuitId ?? c.id;
+    if (id == null) continue;
+    circuits.push({
+      id,
+      name: (c.name || "").trim(),
+      state: stateById.has(id) ? stateById.get(id) : false,
+      function: typeof c.function === "number" ? c.function : null,
+      interface: typeof c.interface === "number" ? c.interface : null,
+      live: stateById.has(id),
+    });
+  }
+
+  // Fallback if config gave nothing — return live entries with empty names
+  if (circuits.length === 0) {
+    for (const [id, state] of stateById.entries()) {
+      circuits.push({ id, name: "", state, function: null, interface: null, live: true });
+    }
+  }
 
   return {
     pool_temp: pool.currentTemp ?? pool.currentTemperature ?? pool.lastTemperature ?? null,
@@ -200,18 +183,17 @@ async function fetchStatus(client, systemName) {
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
     air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
-    circuits: buildCircuits(equip, config),
-    raw: { equip },
+    circuits,
   };
 }
 
+// ─── Routes ──────────────────────────────────────────────────────────────
 app.get("/healthz", (_req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
-    cached_systems: connections.size,
-    cached_configs: configCache.size,
-    version: "1.3.0",
+    memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+    version: "1.4.0",
   });
 });
 
@@ -225,13 +207,12 @@ app.post("/api/pool/status", async (req, res) => {
     });
   }
   try {
-    const client = await getClient(systemName, password ?? "");
-    const status = await fetchStatus(client, systemName);
+    const status = await withConnection(systemName, password ?? "", (client) =>
+      fetchStatus(client),
+    );
     res.json({ success: true, status });
   } catch (e) {
     console.error(`status ${systemName}:`, e.message);
-    connections.delete(systemName);
-    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -250,25 +231,23 @@ app.post("/api/pool/heater", async (req, res) => {
     return res.status(400).json({ error: "temp must be 50-110" });
   }
   try {
-    const client = await getClient(systemName, password ?? "");
-    const bodyId = bodyType === "spa" ? 1 : 0;
-    await client.bodies.setSetPointAsync(bodyId, t);
-
-    await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-    const status = await fetchStatus(client, systemName);
-    const actual = bodyId === 0 ? status.pool_set_point : status.spa_set_point;
-    const verified = Number(actual) === t;
-
+    const result = await withConnection(systemName, password ?? "", async (client) => {
+      const bodyId = bodyType === "spa" ? 1 : 0;
+      await client.bodies.setSetPointAsync(bodyId, t);
+      await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+      const status = await fetchStatus(client);
+      const actual = bodyId === 0 ? status.pool_set_point : status.spa_set_point;
+      const verified = Number(actual) === t;
+      return { actual, verified, status };
+    });
     res.json({
       success: true,
-      actual_temp: typeof actual === "number" ? actual : t,
-      verified,
-      status,
+      actual_temp: typeof result.actual === "number" ? result.actual : t,
+      verified: result.verified,
+      status: result.status,
     });
   } catch (e) {
     console.error(`heater ${systemName}:`, e.message);
-    connections.delete(systemName);
-    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -283,13 +262,12 @@ app.post("/api/pool/circuits", async (req, res) => {
     });
   }
   try {
-    const client = await getClient(systemName, password ?? "");
-    const status = await fetchStatus(client, systemName);
+    const status = await withConnection(systemName, password ?? "", (client) =>
+      fetchStatus(client),
+    );
     res.json({ success: true, circuits: status.circuits });
   } catch (e) {
     console.error(`circuits ${systemName}:`, e.message);
-    connections.delete(systemName);
-    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -311,69 +289,54 @@ app.post("/api/pool/circuit", async (req, res) => {
     return res.status(400).json({ error: "`on` must be true or false" });
   }
   try {
-    const client = await getClient(systemName, password ?? "");
-    await client.circuits.setCircuitStateAsync(cid, on);
-
-    await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
-    const status = await fetchStatus(client, systemName);
-    const found = status.circuits.find((c) => c.id === cid);
-    const verified = !!found && found.state === on;
-
-    res.json({
-      success: true,
-      circuit_id: cid,
-      desired_state: on,
-      actual_state: found?.state ?? null,
-      verified,
-      status,
+    const result = await withConnection(systemName, password ?? "", async (client) => {
+      await client.circuits.setCircuitStateAsync(cid, on);
+      await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+      const status = await fetchStatus(client);
+      const found = status.circuits.find((c) => c.id === cid);
+      const verified = !!found && found.state === on;
+      return {
+        circuit_id: cid,
+        desired_state: on,
+        actual_state: found?.state ?? null,
+        verified,
+        status,
+      };
     });
+    res.json({ success: true, ...result });
   } catch (e) {
     console.error(`circuit ${systemName} ${cid}=${on}:`, e.message);
-    connections.delete(systemName);
-    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
 
-// DEBUG endpoint — dumps everything we read from the controller. Useful for
-// diagnosing new firmwares or unexpected setups.
 app.post("/api/pool/raw", async (req, res) => {
   const { systemName: rawName, password } = req.body || {};
   const systemName = normalizeSystemName(rawName);
   if (!systemName) return res.status(400).json({ error: "bad systemName" });
   try {
-    const client = await getClient(systemName, password ?? "");
+    const result = await withConnection(systemName, password ?? "", async (client) => {
+      const equip = await client.equipment.getEquipmentStateAsync();
 
-    const equip = await client.equipment.getEquipmentStateAsync();
+      let config = null, configError = null;
+      try {
+        config = await client.equipment.getControllerConfigAsync();
+      } catch (e) { configError = e.message; }
 
-    let config = null, configError = null;
-    try {
-      config = await client.equipment.getControllerConfigAsync();
-    } catch (e) { configError = e.message; }
+      let circuitDefs = null, circuitDefsError = null;
+      try {
+        circuitDefs = await client.equipment.getCircuitDefinitionsAsync();
+      } catch (e) { circuitDefsError = e.message; }
 
-    let circuitDefs = null, circuitDefsError = null;
-    try {
-      circuitDefs = await client.equipment.getCircuitDefinitionsAsync();
-    } catch (e) { circuitDefsError = e.message; }
+      let customNames = null, customNamesError = null;
+      try {
+        customNames = await client.equipment.getCustomNamesAsync();
+      } catch (e) { customNamesError = e.message; }
 
-    let customNames = null, customNamesError = null;
-    try {
-      customNames = await client.equipment.getCustomNamesAsync();
-    } catch (e) { customNamesError = e.message; }
-
-    res.json({
-      success: true,
-      equip,
-      config,
-      configError,
-      circuitDefs,
-      circuitDefsError,
-      customNames,
-      customNamesError,
+      return { equip, config, configError, circuitDefs, circuitDefsError, customNames, customNamesError };
     });
+    res.json({ success: true, ...result });
   } catch (e) {
-    connections.delete(systemName);
-    configCache.delete(systemName);
     res.status(502).json({ error: e.message });
   }
 });
@@ -383,12 +346,7 @@ app.listen(PORT, () => {
 });
 
 function shutdown() {
-  console.log("shutting down, closing pool connections…");
-  for (const [name, entry] of connections.entries()) {
-    try { entry.client.close(); } catch {}
-    connections.delete(name);
-  }
-  configCache.clear();
+  console.log("shutting down…");
   process.exit(0);
 }
 process.on("SIGTERM", shutdown);
