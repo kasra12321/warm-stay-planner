@@ -1,16 +1,14 @@
 /**
  * Pool Heat — Raspberry Pi bridge server
  *
- * Connection management note (v1.5):
- *   v1.4 opened a fresh connection per request to fix a listener-leak bug,
- *   but rapid back-to-back requests to the same system started getting rate
- *   limited by Pentair's dispatcher (too many handshakes-per-minute).
- *   v1.5 adds:
- *     - 60-second connection cache (short enough to avoid listener leaks)
- *     - per-system mutex so concurrent requests for the same property
- *       queue instead of opening parallel handshakes
- *     - explicit listener-count check before reusing a cached connection,
- *       discarding it if listeners have started accumulating
+ * Connection management note (v1.5.1):
+ *   v1.5 introduced a bug where a Promise.race timeout would leave the
+ *   underlying connectAsync promise dangling. When it eventually rejected
+ *   (after our timeout already fired), Node treated it as an unhandled
+ *   rejection and crashed the process. v1.5.1 wraps these races so the
+ *   loser is always handled, AND adds a top-level unhandledRejection
+ *   handler as a safety net so a single bad property can never crash
+ *   the service for everyone else.
  */
 
 const express = require("express");
@@ -22,11 +20,25 @@ const VERIFY_DELAY_MS = 1500;
 const REQUEST_TIMEOUT_MS = 25_000;
 const CONNECTION_CACHE_TTL_MS = 60_000;
 const MAX_LISTENERS_BEFORE_RECYCLE = 5;
+const GATEWAY_TIMEOUT_MS = 10_000;
+const UNIT_CONNECT_TIMEOUT_MS = 10_000;
 
 if (!AUTH_TOKEN) {
   console.error("FATAL: PI_AUTH_TOKEN env var is required");
   process.exit(1);
 }
+
+// Top-level safety nets — never let one bad request take down the whole
+// service. We log and move on; the request that triggered the rejection
+// has already returned 502 to its caller.
+process.on("unhandledRejection", (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error(`[unhandledRejection] ${msg}`);
+});
+process.on("uncaughtException", (err) => {
+  console.error(`[uncaughtException] ${err.message}\n${err.stack}`);
+  // Stay alive — we'd rather degrade than die.
+});
 
 const app = express();
 app.use(express.json({ limit: "32kb" }));
@@ -56,17 +68,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ─── Connection cache + per-system mutex ──────────────────────────────────
-//
-// connections: Map<systemName, { client, password, expiresAt }>
-//   - 60s TTL — short enough that listener leaks can't really build up
-//   - listener-count check before reuse: if any event has 5+ listeners,
-//     we tear down and start fresh
-//
-// locks: Map<systemName, Promise>
-//   - one in-flight request per system at a time
-//   - second concurrent request waits for the first to finish before
-//     attempting its own handshake (prevents Pentair throttling)
 const connections = new Map();
 const locks = new Map();
 
@@ -84,14 +85,39 @@ function disposeClient(client) {
   try { client.close(); } catch {}
 }
 
+/**
+ * Race a promise against a timeout. The loser is always handled, so neither
+ * branch can produce an unhandled rejection. This is the v1.5.1 fix.
+ *
+ * If the underlying promise loses the race, we attach a no-op .catch() to
+ * silently absorb its eventual rejection (or resolution). The original
+ * resource is already being torn down by the caller's catch path.
+ */
+function raceWithTimeout(promise, ms, errorMessage) {
+  let timeoutId;
+  const timeout = new Promise((_, rej) => {
+    timeoutId = setTimeout(() => rej(new Error(errorMessage)), ms);
+  });
+  return Promise.race([promise, timeout])
+    .finally(() => clearTimeout(timeoutId))
+    // If `promise` eventually rejects AFTER the timeout already fired, attach
+    // a swallow handler so it doesn't become an unhandled rejection. This is
+    // safe because the caller has already moved on with our error.
+    .catch((err) => {
+      promise.catch(() => {});  // attach NOW to silence late rejection
+      throw err;
+    });
+}
+
 async function openConnection(systemName, password) {
   const gateway = new RemoteLogin(systemName);
   let gatewayData;
   try {
-    gatewayData = await Promise.race([
+    gatewayData = await raceWithTimeout(
       gateway.connectAsync(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("gateway timeout")), 10_000)),
-    ]);
+      GATEWAY_TIMEOUT_MS,
+      "gateway timeout",
+    );
   } finally {
     try { await gateway.closeAsync(); } catch {}
   }
@@ -104,12 +130,14 @@ async function openConnection(systemName, password) {
 
   const client = new UnitConnection();
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
+  // Pre-attach a swallow handler in case `connectAsync` rejects after our
+  // timeout already fired and the caller has moved on.
+  const connectPromise = client.connectAsync();
   try {
-    await Promise.race([
-      client.connectAsync(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error("unit connect timeout")), 10_000)),
-    ]);
+    await raceWithTimeout(connectPromise, UNIT_CONNECT_TIMEOUT_MS, "unit connect timeout");
   } catch (e) {
+    // Make absolutely sure the underlying promise can't bubble up later
+    connectPromise.catch(() => {});
     disposeClient(client);
     throw e;
   }
@@ -125,12 +153,10 @@ async function getOrOpenClient(systemName, password) {
       disposeClient(cached.client);
       connections.delete(systemName);
     } else {
-      // Extend TTL on each successful reuse, capped — popular systems stay warm.
       cached.expiresAt = Date.now() + CONNECTION_CACHE_TTL_MS;
       return cached.client;
     }
   } else if (cached) {
-    // Expired or password changed
     disposeClient(cached.client);
     connections.delete(systemName);
   }
@@ -144,16 +170,7 @@ async function getOrOpenClient(systemName, password) {
   return client;
 }
 
-/**
- * Run handler against a connection for the given system. Serialized per
- * system: a second concurrent call for the same systemName waits for the
- * first to finish. Across different systemNames, calls run in parallel.
- *
- * On any error inside the handler, the connection is discarded (not reused).
- * On success, the connection stays in the cache for the next caller.
- */
 async function withConnection(systemName, password, handler) {
-  // Wait for any in-flight request on the same system
   const prev = locks.get(systemName);
   if (prev) {
     try { await prev; } catch {}
@@ -167,18 +184,17 @@ async function withConnection(systemName, password, handler) {
   let client;
   try {
     client = await getOrOpenClient(systemName, password);
-    const result = await Promise.race([
-      handler(client),
-      new Promise((_, rej) =>
-        setTimeout(() => rej(new Error("handler timeout")), REQUEST_TIMEOUT_MS),
-      ),
-    ]);
+    const handlerPromise = handler(client);
+    const result = await raceWithTimeout(
+      handlerPromise,
+      REQUEST_TIMEOUT_MS,
+      "handler timeout",
+    );
     const elapsed = Date.now() - startedAt;
     console.log(`[ok] ${systemName} (${elapsed}ms)`);
     resolveLock();
     return result;
   } catch (e) {
-    // Drop the connection on error — it may be in a bad state
     if (client) {
       const cached = connections.get(systemName);
       if (cached && cached.client === client) {
@@ -189,8 +205,6 @@ async function withConnection(systemName, password, handler) {
     rejectLock(e);
     throw e;
   } finally {
-    // Only clear the lock if it's still ours (a later request may have
-    // replaced it after our reject — unlikely but cheap to guard against)
     if (locks.get(systemName) === lock) locks.delete(systemName);
   }
 }
@@ -256,7 +270,7 @@ app.get("/healthz", (_req, res) => {
     memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
     cached_connections: connections.size,
     in_flight_locks: locks.size,
-    version: "1.5.0",
+    version: "1.5.1",
   });
 });
 
