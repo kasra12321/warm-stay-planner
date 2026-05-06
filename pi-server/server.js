@@ -529,7 +529,17 @@ app.post("/api/iaqua/proxy", async (req, res) => {
   );
   return res.json({ status: upstreamStatus, body: bodyText });
 });
-
+// Self-healing memory guard. Node's GC sometimes fails to reclaim memory
+// under sustained load. If we cross a safe threshold, exit cleanly so
+// systemd restarts us with a fresh process.
+const MEMORY_THRESHOLD_MB = 600;
+setInterval(() => {
+  const mb = Math.round(process.memoryUsage().rss / 1024 / 1024);
+  if (mb > MEMORY_THRESHOLD_MB) {
+    console.warn(`[memory-guard] ${mb}MB > ${MEMORY_THRESHOLD_MB}MB, restarting`);
+    process.exit(0);  // systemd auto-restart catches this
+  }
+}, 10_000);
 app.listen(PORT, () => {
   console.log(`pool-pi v1.7 listening on :${PORT}`);
 });
