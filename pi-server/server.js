@@ -410,7 +410,73 @@ app.post("/api/pool/raw", async (req, res) => {
     res.status(502).json({ error: e.message });
   }
 });
+// ============================================================
+// iAquaLink passthrough — forward arbitrary iAquaLink API calls
+// from the cloud through this Pi's residential IP. iAquaLink
+// rate-limits Cloudflare's IP pool but not residential IPs, so
+// routing here lets the cloud avoid the rate limit.
+//
+// The Pi is a STATELESS proxy. No iAquaLink credentials are stored.
+// Cloud sends credentials in each call body, we forward to iAquaLink,
+// return the response.
+// ============================================================
 
+const IAQUA_ALLOWED_HOSTS = new Set([
+  "prod.zodiac-io.com",
+  "r-api.iaqualink.net",
+  "p-api.iaqualink.net",
+]);
+
+app.post("/api/iaqua/proxy", async (req, res) => {
+  const { method, url, body } = req.body || {};
+
+  // Validation
+  if (!method || (method !== "GET" && method !== "POST")) {
+    return res.status(400).json({ error: "method must be GET or POST" });
+  }
+  if (!url || typeof url !== "string") {
+    return res.status(400).json({ error: "url is required" });
+  }
+
+  // Whitelist iAquaLink hosts only — prevent the proxy from being abused
+  // to hit arbitrary URLs.
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return res.status(400).json({ error: "invalid url" });
+  }
+  if (!IAQUA_ALLOWED_HOSTS.has(parsed.hostname)) {
+    console.warn(`[iaqua-proxy] blocked non-iAquaLink host: ${parsed.hostname}`);
+    return res.status(403).json({ error: "host not allowed" });
+  }
+
+  const headers = {
+    Accept: "application/json",
+    "User-Agent": "okhttp/3.14.7",
+  };
+  if (method === "POST") {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const fetchOpts = { method, headers };
+  if (method === "POST" && body !== null && body !== undefined) {
+    fetchOpts.body = JSON.stringify(body);
+  }
+
+  try {
+    const start = Date.now();
+    const upstream = await fetch(url, fetchOpts);
+    const elapsed = Date.now() - start;
+    const text = await upstream.text();
+    console.log(`[iaqua-proxy] ${method} ${parsed.hostname}${parsed.pathname} → ${upstream.status} (${elapsed}ms)`);
+    return res.json({ status: upstream.status, body: text });
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    console.error(`[iaqua-proxy] fetch failed for ${url}: ${msg}`);
+    return res.status(502).json({ error: "upstream fetch failed", detail: msg });
+  }
+});
 app.listen(PORT, () => {
   console.log(`pool-pi listening on :${PORT}`);
 });
