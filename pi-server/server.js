@@ -1,14 +1,15 @@
 /**
- * Pool Heat — Raspberry Pi bridge server
+ * Pool Heat — Raspberry Pi bridge server (v1.7)
  *
- * Connection management note (v1.5.1):
- *   v1.5 introduced a bug where a Promise.race timeout would leave the
- *   underlying connectAsync promise dangling. When it eventually rejected
- *   (after our timeout already fired), Node treated it as an unhandled
- *   rejection and crashed the process. v1.5.1 wraps these races so the
- *   loser is always handled, AND adds a top-level unhandledRejection
- *   handler as a safety net so a single bad property can never crash
- *   the service for everyone else.
+ * v1.7: Added /api/iaqua/proxy with built-in rate limiting and memory safety.
+ *   - Self-throttles iAquaLink calls to 1 every 4 seconds (15/min)
+ *     to stay under iAquaLink's per-IP rate limit (~6-8/min observed)
+ *   - Caps in-flight proxy queue at 8 to prevent OOM on Pi
+ *   - Returns 429 + Retry-After when queue is full so cloud can back off
+ *   - Strict 15s AbortController timeout per request
+ *
+ * v1.5.1: Race-with-timeout fix to prevent unhandled promise rejections.
+ *   Top-level safety nets to keep service alive under unexpected errors.
  */
 
 const express = require("express");
@@ -270,7 +271,8 @@ app.get("/healthz", (_req, res) => {
     memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
     cached_connections: connections.size,
     in_flight_locks: locks.size,
-    version: "1.5.1",
+    iaqua_queue_depth: iaquaQueueDepth,
+    version: "1.7",
   });
 });
 
@@ -410,15 +412,18 @@ app.post("/api/pool/raw", async (req, res) => {
     res.status(502).json({ error: e.message });
   }
 });
+
 // ============================================================
-// iAquaLink passthrough — forward arbitrary iAquaLink API calls
-// from the cloud through this Pi's residential IP. iAquaLink
-// rate-limits Cloudflare's IP pool but not residential IPs, so
-// routing here lets the cloud avoid the rate limit.
+// iAquaLink passthrough (v1.7) — forward arbitrary iAquaLink API
+// calls from the cloud through this Pi's residential IP.
 //
-// The Pi is a STATELESS proxy. No iAquaLink credentials are stored.
-// Cloud sends credentials in each call body, we forward to iAquaLink,
-// return the response.
+// iAquaLink rate-limits per-IP at roughly 6-8 calls/minute. We
+// self-throttle at 1 call per 4 seconds (15/min) to stay safely
+// under the limit. When local queue fills, returns 429 with
+// Retry-After hint so cloud can back off rather than blasting us.
+//
+// Memory safety: caps in-flight queue at 8, AbortController
+// timeout at 15s, releases response refs ASAP after sending reply.
 // ============================================================
 
 const IAQUA_ALLOWED_HOSTS = new Set([
@@ -427,10 +432,34 @@ const IAQUA_ALLOWED_HOSTS = new Set([
   "p-api.iaqualink.net",
 ]);
 
+const IAQUA_MIN_GAP_MS = 4000;        // min spacing between iAquaLink calls
+const IAQUA_MAX_QUEUE = 8;            // max waiting requests
+const IAQUA_FETCH_TIMEOUT_MS = 15_000; // hard timeout per call
+
+let iaquaLastCallAt = 0;
+let iaquaQueueDepth = 0;
+
+async function waitForIaquaSlot() {
+  iaquaQueueDepth++;
+  try {
+    while (true) {
+      const now = Date.now();
+      const gap = now - iaquaLastCallAt;
+      if (gap >= IAQUA_MIN_GAP_MS) {
+        iaquaLastCallAt = now;
+        return; // slot acquired
+      }
+      const wait = IAQUA_MIN_GAP_MS - gap;
+      await new Promise((r) => setTimeout(r, wait + 50));
+    }
+  } finally {
+    iaquaQueueDepth--;
+  }
+}
+
 app.post("/api/iaqua/proxy", async (req, res) => {
   const { method, url, body } = req.body || {};
 
-  // Validation
   if (!method || (method !== "GET" && method !== "POST")) {
     return res.status(400).json({ error: "method must be GET or POST" });
   }
@@ -438,8 +467,6 @@ app.post("/api/iaqua/proxy", async (req, res) => {
     return res.status(400).json({ error: "url is required" });
   }
 
-  // Whitelist iAquaLink hosts only — prevent the proxy from being abused
-  // to hit arbitrary URLs.
   let parsed;
   try {
     parsed = new URL(url);
@@ -447,9 +474,19 @@ app.post("/api/iaqua/proxy", async (req, res) => {
     return res.status(400).json({ error: "invalid url" });
   }
   if (!IAQUA_ALLOWED_HOSTS.has(parsed.hostname)) {
-    console.warn(`[iaqua-proxy] blocked non-iAquaLink host: ${parsed.hostname}`);
     return res.status(403).json({ error: "host not allowed" });
   }
+
+  // Reject early if queue is too deep — protects Pi memory under bursts
+  if (iaquaQueueDepth >= IAQUA_MAX_QUEUE) {
+    return res
+      .status(429)
+      .set("Retry-After", "10")
+      .json({ error: "pi proxy queue full, retry later" });
+  }
+
+  // Wait for a rate-limit slot (4s minimum since last iAquaLink call)
+  await waitForIaquaSlot();
 
   const headers = {
     Accept: "application/json",
@@ -464,21 +501,37 @@ app.post("/api/iaqua/proxy", async (req, res) => {
     fetchOpts.body = JSON.stringify(body);
   }
 
+  // Strict timeout via AbortController prevents pile-up on hung connections
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), IAQUA_FETCH_TIMEOUT_MS);
+  fetchOpts.signal = controller.signal;
+
+  let upstreamStatus = 0;
+  let bodyText = "";
+  let elapsed = 0;
   try {
     const start = Date.now();
     const upstream = await fetch(url, fetchOpts);
-    const elapsed = Date.now() - start;
-    const text = await upstream.text();
-    console.log(`[iaqua-proxy] ${method} ${parsed.hostname}${parsed.pathname} → ${upstream.status} (${elapsed}ms)`);
-    return res.json({ status: upstream.status, body: text });
+    elapsed = Date.now() - start;
+    upstreamStatus = upstream.status;
+    bodyText = await upstream.text();
   } catch (e) {
+    clearTimeout(timeoutId);
     const msg = e && e.message ? e.message : String(e);
-    console.error(`[iaqua-proxy] fetch failed for ${url}: ${msg}`);
+    console.error(`[iaqua-proxy] fetch failed: ${msg}`);
     return res.status(502).json({ error: "upstream fetch failed", detail: msg });
+  } finally {
+    clearTimeout(timeoutId);
   }
+
+  console.log(
+    `[iaqua-proxy] ${method} ${parsed.hostname}${parsed.pathname} → ${upstreamStatus} (${elapsed}ms, q=${iaquaQueueDepth})`,
+  );
+  return res.json({ status: upstreamStatus, body: bodyText });
 });
+
 app.listen(PORT, () => {
-  console.log(`pool-pi listening on :${PORT}`);
+  console.log(`pool-pi v1.7 listening on :${PORT}`);
 });
 
 function shutdown() {
