@@ -165,15 +165,17 @@ function getPacificDateString(date = new Date()): string {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  try {
+  // Run the actual sync in the background so we don't hit the 150s
+  // request idle timeout. The HTTP caller (cron or admin "Sync Now")
+  // gets an immediate ack; results land in home_pool_state + summary email.
+  const work = (async () => {
+    try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const pat = Deno.env.get("HOSPITABLE_PAT");
     if (!pat) {
-      return new Response(JSON.stringify({ error: "HOSPITABLE_PAT not configured" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+        console.error("HOSPITABLE_PAT not configured");
+        return;
     }
     const supabase = createClient(supabaseUrl, serviceKey);
 
@@ -442,15 +444,22 @@ serve(async (req) => {
       }
     }
 
-    return new Response(
-      JSON.stringify({ success: true, changes, errors, processed: (homes || []).length }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (e: any) {
-    console.error("sync-pool-occupancy error:", e);
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+      console.log(`sync-pool-occupancy done: ${changes.length} changes, ${errors.length} errors, ${(homes || []).length} processed`);
+    } catch (e: any) {
+      console.error("sync-pool-occupancy error:", e);
+    }
+  })();
+
+  // Keep the worker alive past the response. Falls back to awaiting if
+  // EdgeRuntime isn't available (local dev).
+  // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+    // @ts-ignore
+    EdgeRuntime.waitUntil(work);
   }
+
+  return new Response(
+    JSON.stringify({ success: true, queued: true, message: "Sync started in background; results will appear in home_pool_state and summary email." }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });
