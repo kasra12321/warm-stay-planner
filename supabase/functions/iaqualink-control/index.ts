@@ -334,7 +334,23 @@ serve(async (req) => {
       for (const row of homeScreen) {
         for (const [k, v] of Object.entries(row)) flat[k] = String(v);
       }
-      return new Response(JSON.stringify({ success: true, status: flat, raw: res.body }), {
+      // Normalize the active set point based on the configured sensor index.
+      // index 1 -> temp1 -> spa_set_point on dual pool/spa controllers, or
+      //                     pool_set_point on pool-only controllers
+      // index 2 -> temp2 -> pool_set_point on dual controllers
+      const tempIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
+      const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
+      const primaryVal = parseInt(flat[primaryField], 10);
+      const fallbackVal = parseInt(flat[fallbackField], 10);
+      let activeSetPoint: number | null = null;
+      if (!isNaN(primaryVal)) activeSetPoint = primaryVal;
+      else if (!isNaN(fallbackVal)) activeSetPoint = fallbackVal;
+      // Override pool_set_point in the returned status with the active one so
+      // the admin UI shows the setpoint that actually corresponds to this
+      // home's pool sensor (e.g. Athens uses temp1 -> spa_set_point).
+      if (activeSetPoint != null) flat.pool_set_point = String(activeSetPoint);
+      return new Response(JSON.stringify({ success: true, status: flat, raw: res.body, active_set_point: activeSetPoint, temp_index: tempIndex }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
