@@ -188,16 +188,24 @@ serve(async (req) => {
     const changes: Array<{ home: string; from: string | null; to: string; temp: number; reason: string }> = [];
     const errors: Array<{ home: string; error: string }> = [];
 
-    // Stagger calls between homes so we don't hammer the Pi (which bridges all
-    // ScreenLogic homes through a single TCP connection per pool). 20s gap is
-    // enough breathing room without making the whole sync run too long.
-    const STAGGER_MS = 20_000;
+    // Stagger calls only between ScreenLogic homes (they share one Pi bridge).
+    // iAquaLink homes go to Zodiac's cloud and don't need staggering.
+    // 8s gap is enough breathing room for the Pi without blowing the edge
+    // function's ~150s wall-clock budget (which previously caused later homes
+    // like Athens to be skipped entirely).
+    const SCREENLOGIC_STAGGER_MS = 8_000;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     const homesList = homes || [];
+    let lastWasScreenLogic = false;
     for (let i = 0; i < homesList.length; i++) {
       const home = homesList[i];
-      if (i > 0) await sleep(STAGGER_MS);
+      const isScreenLogic = ((home as any).controller_type || "iaqualink") === "screenlogic";
+      // Only sleep if THIS home is ScreenLogic and the PREVIOUS one was too.
+      if (i > 0 && isScreenLogic && lastWasScreenLogic) {
+        await sleep(SCREENLOGIC_STAGGER_MS);
+      }
+      lastWasScreenLogic = isScreenLogic;
       try {
         // Dispatch the right controller. iAquaLink homes still need a serial;
         // ScreenLogic homes need a system name. Skip homes that have neither so
