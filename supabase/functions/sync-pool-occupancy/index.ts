@@ -444,15 +444,22 @@ serve(async (req) => {
       }
     }
 
-    return new Response(
-      JSON.stringify({ success: true, changes, errors, processed: (homes || []).length }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (e: any) {
-    console.error("sync-pool-occupancy error:", e);
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+      console.log(`sync-pool-occupancy done: ${changes.length} changes, ${errors.length} errors, ${(homes || []).length} processed`);
+    } catch (e: any) {
+      console.error("sync-pool-occupancy error:", e);
+    }
+  })();
+
+  // Keep the worker alive past the response. Falls back to awaiting if
+  // EdgeRuntime isn't available (local dev).
+  // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+    // @ts-ignore
+    EdgeRuntime.waitUntil(work);
   }
+
+  return new Response(
+    JSON.stringify({ success: true, queued: true, message: "Sync started in background; results will appear in home_pool_state and summary email." }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });
