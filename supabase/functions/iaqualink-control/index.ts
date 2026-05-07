@@ -148,7 +148,23 @@ serve(async (req) => {
     // Auth: verify caller is admin (skip for internal service calls with service-role auth)
     const authHeader = req.headers.get("Authorization") || "";
     const token = authHeader.replace("Bearer ", "");
-    const isServiceRole = token === serviceKey;
+    // Treat as service-role if the token matches the service key exactly,
+    // OR if it's a JWT whose `role` claim is `service_role`. The strict
+    // string match alone is fragile because Supabase's signing-key system
+    // can hand different functions different forms of the service key
+    // (legacy JWT vs. new sb_secret_...), which caused sync-pool-occupancy
+    // calls to be rejected as "Unauthorized".
+    let isServiceRole = token === serviceKey;
+    if (!isServiceRole && token && token.split(".").length === 3) {
+      try {
+        const payload = JSON.parse(
+          atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+        );
+        if (payload?.role === "service_role") isServiceRole = true;
+      } catch {
+        // not a decodable JWT — fall through to user auth check
+      }
+    }
 
     if (!isServiceRole) {
       const userClient = createClient(supabaseUrl, anonKey, {
