@@ -165,15 +165,17 @@ function getPacificDateString(date = new Date()): string {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  try {
+  // Run the actual sync in the background so we don't hit the 150s
+  // request idle timeout. The HTTP caller (cron or admin "Sync Now")
+  // gets an immediate ack; results land in home_pool_state + summary email.
+  const work = (async () => {
+    try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const pat = Deno.env.get("HOSPITABLE_PAT");
     if (!pat) {
-      return new Response(JSON.stringify({ error: "HOSPITABLE_PAT not configured" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+        console.error("HOSPITABLE_PAT not configured");
+        return;
     }
     const supabase = createClient(supabaseUrl, serviceKey);
 
