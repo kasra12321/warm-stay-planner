@@ -238,6 +238,28 @@ serve(async (req) => {
         let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
 
         const homeName = home.internal_name || home.name;
+        // Active guest order today? Order temp wins over occupancy/eco.
+        // This avoids a race with process-reminders that previously caused
+        // sync to "drift correct" a guest-heat pool back down to baseline.
+        const todayPacific = getPacificDateString();
+        const { data: activeDate } = await supabase
+          .from("order_dates")
+          .select("temperature, orders!inner(home_id, status)")
+          .eq("orders.home_id", home.id)
+          .eq("date", todayPacific)
+          .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
+          .order("temperature", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (activeDate) {
+          decision = {
+            mode: "guest_heat",
+            temp: activeDate.temperature,
+            nextCheckin: decision.nextCheckin,
+            reason: `active guest order (${activeDate.temperature}°F)`,
+          };
+        }
+
         const ecoPausedUntil = (state as any)?.eco_paused_until || null;
         const ecoPauseActive = decision.mode === "eco" && ecoPausedUntil && getPacificDateString() < ecoPausedUntil;
         if (ecoPauseActive) {
