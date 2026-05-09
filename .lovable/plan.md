@@ -1,74 +1,61 @@
-# Changes
+## Two issues to fix
 
-## 1. Schedule page — show orders AND guest stays
+### 1. Sync overrides active guest orders (drift "correction" undid the 90°F)
 
-Currently `AdminSchedule.tsx` only lists rows from `reminders` (heat actions tied to paid orders). Eco/baseline transitions driven by guest occupancy never create reminder rows — they're applied directly by the hourly `sync-pool-occupancy` job — so they don't appear.
+**Root cause:** `sync-pool-occupancy` decides target temp purely from Hospitable occupancy (baseline 80°F when occupied). It only respects guest orders indirectly — by checking if `home_pool_state.current_mode === 'guest_heat'`, which `process-reminders` sets when a reminder fires.
 
-Update `src/pages/admin/AdminSchedule.tsx` to render two stacked sections:
+There's a race: the hourly cron fires both `process-reminders` and `sync-pool-occupancy` at the top of the hour. If sync reads `home_pool_state` before the reminder has upserted `guest_heat/90`, sync sees `baseline/80`, runs the drift check, finds the pool at 90°F (you set it manually), and "corrects" it back to 80°F.
 
-- **Order-driven heat actions** — same query as today (`reminders` + `homes` + `orders`), split into Upcoming / Completed.
-- **Guest occupancy schedule** — query `home_pool_state` joined to `homes` for every home with `iaqualink_enabled = true`. For each home show:
-  - Home name
-  - Current mode (Baseline / Guest Heat / Eco) with temp
-  - Next check-in date (`next_checkin_date`) with a derived line: "Restore to baseline at <date - 1 day> 8 AM PT" when current mode is `eco` and a check-in exists.
-  - If `eco_paused_until` is in the future, show "Eco paused until <date>".
-- Sort by `next_checkin_date` ascending, nulls last.
+**Fix:** make `sync-pool-occupancy` query `order_dates` directly. If today (Pacific) has a paid order for this home, force `decision = { mode: 'guest_heat', temp: <order_temp>, reason: 'active order' }` regardless of `home_pool_state`. This removes the race entirely — the order is the source of truth, not the cached state row.
 
-No backend / migration changes required for this section.
+Logic added near the top of the per-home loop in `supabase/functions/sync-pool-occupancy/index.ts`:
 
-## 2. Heat Settings — add new temperature tiers
+```ts
+// Active guest order today? Order temp wins over occupancy/eco.
+const todayPacific = getPacificDateString();
+const { data: activeDate } = await supabase
+  .from("order_dates")
+  .select("temperature, orders!inner(home_id, status)")
+  .eq("orders.home_id", home.id)
+  .eq("date", todayPacific)
+  .in("orders.status", ["stripe_paid","venmo_submitted","zelle_submitted","apple_cash_submitted"])
+  .order("temperature", { ascending: false })  // if multiple, take hottest
+  .limit(1)
+  .maybeSingle();
 
-Update `src/pages/admin/AdminHeatSettings.tsx`:
-
-- Add an **"Add temperature option"** row at the bottom with two inputs (temp °F, $/day) and a Save button that inserts into `heating_options` (active = true).
-- Add a small **delete (or deactivate)** button on each existing card. Use soft delete by setting `active = false` to preserve historical orders.
-- Invalidate the `admin-heating-options` query after each mutation.
-
-No schema changes — the table already supports this.
-
-## 3. Notifications — email only, drop SMS
-
-Front-end `src/pages/admin/AdminNotificationSettings.tsx`:
-- Remove the SMS card entirely (admin phone + Twilio From inputs).
-- Keep Admin Email + Calendar Invite Email.
-- Drop `admin_sms_number` and `twilio_from_number` from the save mutation.
-
-Edge functions — remove the SMS branch (keep email):
-- `supabase/functions/process-reminders/index.ts` — delete the Twilio block.
-- `supabase/functions/notify-admin-order/index.ts` — delete the admin SMS block (guest SMS via `send-guest-sms` stays; that's a guest-facing confirmation, not an admin notification).
-- `supabase/functions/create-reminders/index.ts` — delete the trailing admin SMS block.
-
-We're leaving the DB columns (`admin_sms_number`, `twilio_from_number`) in place (no destructive migration) — they're just unused. `send-guest-sms` continues to work for guest order confirmations.
-
-## 4. Rename `iaqualink_enabled` → `controller_enabled` and `iaqualink_baseline_temp` → `baseline_temp`
-
-Database migration:
-
-```sql
-ALTER TABLE public.homes RENAME COLUMN iaqualink_enabled TO controller_enabled;
-ALTER TABLE public.homes RENAME COLUMN iaqualink_baseline_temp TO baseline_temp;
+if (activeDate) {
+  decision = { mode: "guest_heat", temp: activeDate.temperature, nextCheckin: null, reason: "active guest order" };
+}
 ```
 
-Then update every reference (rg results show these files):
-- `src/pages/admin/AdminIAquaLink.tsx` (Home interface, select/update payloads, label "Enabled")
-- `src/pages/admin/AdminOverview.tsx` (`pauseEcoMutation`, `poolStates` query, badge label fallback)
-- `src/pages/admin/AdminHomes.tsx` (verify and update if referenced)
-- `supabase/functions/sync-pool-occupancy/index.ts`
-- `supabase/functions/process-reminders/index.ts`
-- `supabase/functions/create-reminders/index.ts`
-- `supabase/functions/iaqualink-control/index.ts` and `screenlogic-control/index.ts` if they read these columns
+This runs BEFORE the eco-pause / drift logic, so:
+- Drift check on Lego Dream today would compare actual 90°F to target 90°F → no correction.
+- If somehow the pool drifted off 90, it would be re-applied to 90 (correct).
+- Eco/baseline only apply on days with no paid order.
 
-`src/integrations/supabase/types.ts` regenerates automatically.
+### 2. Admin Overview doesn't surface active orders
 
-## 5. Pool Control page tweaks
+Add a new card on `src/pages/admin/AdminOverview.tsx` titled **"Active Heat Orders"** above (or alongside) "Upcoming Heat Actions". It lists every order whose `order_dates` contains today or a future date within ~7 days, grouped by order, showing:
 
-`src/pages/admin/AdminIAquaLink.tsx`:
-- Change page title from `Pool Control (iAquaLink + Eco Mode)` → `Pool Control (Settings & Automation)`.
-- Hide the **iAquaLink Connection** card when no homes have `controller_type = 'iaqualink'` (compute `const anyIAqua = homes.some(h => h.controller_type === 'iaqualink')` and gate the card on it).
-- Update the per-home enable label: keep "Enabled" but bind to `controller_enabled`.
+- Home name
+- Guest name
+- Date range + temperature(s) (e.g. `May 9 · 90°F`)
+- A small "Active today" badge if today is in the order's dates
 
-# Technical notes
+Query (React Query):
+```ts
+supabase
+  .from("orders")
+  .select("id, guest_name, total, status, homes(name), order_dates(date, temperature)")
+  .in("status", ["stripe_paid","venmo_submitted","zelle_submitted","apple_cash_submitted"])
+  .order("created_at", { ascending: false });
+```
+Filter client-side to orders with at least one date in `[today, today+14]`.
 
-- All edge functions touched in step 3 and step 4 will be redeployed (`process-reminders`, `notify-admin-order`, `create-reminders`, `sync-pool-occupancy`, `iaqualink-control`, `screenlogic-control`).
-- `useData.ts`, RLS policies, and stored functions (`get_blocked_dates`) don't reference the renamed columns.
-- No data loss: migration is a pure column rename; old `eco_paused_until` and other columns are untouched.
+### Files touched
+- `supabase/functions/sync-pool-occupancy/index.ts` — active-order override
+- `src/pages/admin/AdminOverview.tsx` — new "Active Heat Orders" card
+
+### Not changing
+- `process-reminders` keeps working as today (will now agree with sync rather than race against it).
+- No DB schema changes.
