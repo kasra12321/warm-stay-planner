@@ -241,7 +241,20 @@ serve(async (req) => {
         // Active guest order today? Order temp wins over occupancy/eco.
         // This avoids a race with process-reminders that previously caused
         // sync to "drift correct" a guest-heat pool back down to baseline.
+        // BUT: orders end at 5pm Pacific (turn_off reminder runs at 17:00),
+        // so after 5pm on the last day, treat the order as ended — otherwise
+        // the 6pm sync would re-apply the order temp on top of the baseline
+        // that process-reminders just set.
         const todayPacific = getPacificDateString();
+        const pacificHour = parseInt(
+          new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Los_Angeles",
+            hour: "2-digit",
+            hour12: false,
+          }).format(new Date()),
+          10,
+        );
+        const orderStillActiveToday = pacificHour < 17;
         const { data: activeDate } = await supabase
           .from("order_dates")
           .select("temperature, orders!inner(home_id, status)")
@@ -251,7 +264,7 @@ serve(async (req) => {
           .order("temperature", { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (activeDate) {
+        if (activeDate && orderStillActiveToday) {
           decision = {
             mode: "guest_heat",
             temp: activeDate.temperature,
