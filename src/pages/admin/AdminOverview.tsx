@@ -288,22 +288,27 @@ const AdminOverview = () => {
                   <div key={home.id} className="flex items-start justify-between gap-3 border-b last:border-0 pb-3 last:pb-0">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{home.name}</div>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs mt-1">
-                        <span className="text-foreground">
-                          <span className="text-muted-foreground">Pool:</span>{' '}
-                          <span className="font-semibold">{state?.last_actual_temp != null ? `${state.last_actual_temp}°F` : '—'}</span>
-                        </span>
-                        <span className="text-foreground">
-                          <span className="text-muted-foreground">Setpoint:</span>{' '}
-                          <span className="font-semibold">{state?.last_actual_setpoint != null ? `${state.last_actual_setpoint}°F` : '—'}</span>
-                        </span>
-                        <span className="text-muted-foreground">
-                          {state?.last_temp_check_at ? `checked ${timeAgo(state.last_temp_check_at)}` : 'never checked'}
-                        </span>
-                        {state?.last_temp_check_error && (
-                          <span className="text-destructive">⚠ {state.last_temp_check_error}</span>
-                        )}
-                      </div>
+                      {(() => {
+                        const s = state as any;
+                        return (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs mt-1">
+                            <span className="text-foreground">
+                              <span className="text-muted-foreground">Pool:</span>{' '}
+                              <span className="font-semibold">{s?.last_actual_temp != null ? `${s.last_actual_temp}°F` : '—'}</span>
+                            </span>
+                            <span className="text-foreground">
+                              <span className="text-muted-foreground">Setpoint:</span>{' '}
+                              <span className="font-semibold">{s?.last_actual_setpoint != null ? `${s.last_actual_setpoint}°F` : '—'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              {s?.last_temp_check_at ? `checked ${timeAgo(s.last_temp_check_at)}` : 'never checked'}
+                            </span>
+                            {s?.last_temp_check_error && (
+                              <span className="text-destructive">⚠ {s.last_temp_check_error}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {state?.next_checkin_date
                           ? `Next guest: ${formatDateDisplay(state.next_checkin_date)}`
