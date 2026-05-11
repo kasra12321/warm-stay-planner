@@ -223,28 +223,11 @@ serve(async (req) => {
           .eq("home_id", home.id)
           .maybeSingle();
 
-        // Skip if a guest heat order is active (process-reminders sets this)
-        if (state?.current_mode === "guest_heat") {
-          await supabase
-            .from("home_pool_state")
-            .update({ last_occupancy_check: nowIso })
-            .eq("home_id", home.id);
-          continue;
-        }
-
-        const reservations = await fetchReservations(home.hospitable_property_id!, pat);
-        const baseline = home.baseline_temp ?? 80;
-        const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
-        let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
-
         const homeName = home.internal_name || home.name;
+
         // Active guest order today? Order temp wins over occupancy/eco.
-        // This avoids a race with process-reminders that previously caused
-        // sync to "drift correct" a guest-heat pool back down to baseline.
-        // BUT: orders end at 5pm Pacific (turn_off reminder runs at 17:00),
-        // so after 5pm on the last day, treat the order as ended — otherwise
-        // the 6pm sync would re-apply the order temp on top of the baseline
-        // that process-reminders just set.
+        // Orders end at 5pm Pacific (turn_off reminder runs at 17:00),
+        // so after 5pm on the last day treat the order as ended.
         const todayPacific = getPacificDateString();
         const pacificHour = parseInt(
           new Intl.DateTimeFormat("en-US", {
@@ -264,12 +247,31 @@ serve(async (req) => {
           .order("temperature", { ascending: false })
           .limit(1)
           .maybeSingle();
-        if (activeDate && orderStillActiveToday) {
+        const hasActiveOrder = !!(activeDate && orderStillActiveToday);
+
+        // If state already reflects guest_heat AND an active order exists,
+        // process-reminders is the source of truth — just touch the heartbeat
+        // and move on. (Without an active order, fall through and let the
+        // normal occupancy/eco logic clear the stale guest_heat state.)
+        if (state?.current_mode === "guest_heat" && hasActiveOrder) {
+          await supabase
+            .from("home_pool_state")
+            .update({ last_occupancy_check: nowIso })
+            .eq("home_id", home.id);
+          continue;
+        }
+
+        const reservations = await fetchReservations(home.hospitable_property_id!, pat);
+        const baseline = home.baseline_temp ?? 80;
+        const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
+        let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
+
+        if (hasActiveOrder) {
           decision = {
             mode: "guest_heat",
-            temp: activeDate.temperature,
+            temp: activeDate!.temperature,
             nextCheckin: decision.nextCheckin,
-            reason: `active guest order (${activeDate.temperature}°F)`,
+            reason: `active guest order (${activeDate!.temperature}°F)`,
           };
         }
 
