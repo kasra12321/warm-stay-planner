@@ -46,8 +46,12 @@ export type Database = {
           eco_paused_until: string | null
           home_id: string
           id: string
+          last_actual_setpoint: number | null
+          last_actual_temp: number | null
           last_occupancy_check: string | null
           last_synced_at: string | null
+          last_temp_check_at: string | null
+          last_temp_check_error: string | null
           next_checkin_date: string | null
           notes: string | null
           updated_at: string
@@ -59,8 +63,12 @@ export type Database = {
           eco_paused_until?: string | null
           home_id: string
           id?: string
+          last_actual_setpoint?: number | null
+          last_actual_temp?: number | null
           last_occupancy_check?: string | null
           last_synced_at?: string | null
+          last_temp_check_at?: string | null
+          last_temp_check_error?: string | null
           next_checkin_date?: string | null
           notes?: string | null
           updated_at?: string
@@ -72,8 +80,12 @@ export type Database = {
           eco_paused_until?: string | null
           home_id?: string
           id?: string
+          last_actual_setpoint?: number | null
+          last_actual_temp?: number | null
           last_occupancy_check?: string | null
           last_synced_at?: string | null
+          last_temp_check_at?: string | null
+          last_temp_check_error?: string | null
           next_checkin_date?: string | null
           notes?: string | null
           updated_at?: string
