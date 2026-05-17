@@ -5,9 +5,17 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Thermometer, Droplets, Plus, Minus, Loader2, MoonStar } from "lucide-react";
+import { Thermometer, Plus, Minus, Loader2, MoonStar } from "lucide-react";
 import { toast } from "sonner";
+import { getFeatureIcon } from "@/lib/feature-icons";
 
+interface FeatureRow {
+  key: string;
+  label: string;
+  target: string;
+  on: boolean | null;
+  icon_key: string | null;
+}
 interface Status {
   home: {
     name: string;
@@ -20,9 +28,11 @@ interface Status {
   };
   pool_temp: number | null;
   spa_temp: number | null;
+  pool_active: boolean | null;
+  spa_active: boolean | null;
   pool_setpoint: number | null;
   spa_setpoint: number | null;
-  features: Array<{ key: string; label: string; target: string; on: boolean | null }>;
+  features: FeatureRow[];
   quiet_active: boolean;
   quiet_end_label: string;
   allow_spa_temp_during_quiet: boolean;
@@ -41,6 +51,25 @@ const PoolControl = () => {
   const { slug = "" } = useParams<{ slug: string }>();
   const qc = useQueryClient();
   const [spaTarget, setSpaTarget] = useState<number | null>(null);
+  // Per-feature cooldown countdown (seconds remaining) keyed by feature key.
+  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (Object.keys(cooldowns).length === 0) return;
+    const id = setInterval(() => {
+      setCooldowns((prev) => {
+        const next: Record<string, number> = {};
+        let changed = false;
+        for (const [k, v] of Object.entries(prev)) {
+          const nv = v - 1;
+          if (nv > 0) next[k] = nv;
+          else changed = true;
+        }
+        return changed || Object.keys(next).length !== Object.keys(prev).length ? next : prev;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [cooldowns]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["guest-pool", slug],
@@ -84,10 +113,11 @@ const PoolControl = () => {
       });
       if (error) throw error;
       if ((data as any)?.error) throw new Error((data as any).error);
-      return data;
+      return { data, key };
     },
-    onSuccess: () => {
+    onSuccess: ({ key }) => {
       toast.success("Updated");
+      setCooldowns((prev) => ({ ...prev, [key]: 15 }));
       setTimeout(() => qc.invalidateQueries({ queryKey: ["guest-pool", slug] }), 2000);
     },
     onError: (e: any) => toast.error(e.message),
@@ -111,8 +141,11 @@ const PoolControl = () => {
     );
   }
 
-  const { home, pool_temp, spa_temp, quiet_active, quiet_end_label, features } = data;
+  const { home, pool_temp, spa_temp, pool_active, spa_active, quiet_active, quiet_end_label, features } = data;
   const target = spaTarget ?? home.spa_min;
+  // Hide the temp readout when we know the body isn't circulating.
+  const showPoolTemp = pool_active !== false;
+  const showSpaTemp = spa_active !== false;
 
   const adjustSpa = (delta: number) => {
     const next = Math.max(home.spa_min, Math.min(home.spa_max, target + delta));
@@ -150,10 +183,14 @@ const PoolControl = () => {
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
                 <Thermometer className="w-3.5 h-3.5" /> Pool
               </div>
-              <p className="text-3xl font-bold mt-1">
-                {pool_temp != null ? pool_temp : "—"}
-                <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
-              </p>
+              {showPoolTemp && pool_temp != null ? (
+                <p className="text-3xl font-bold mt-1">
+                  {pool_temp}
+                  <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground mt-2">Pump off</p>
+              )}
             </CardContent>
           </Card>
           {home.has_spa && (
@@ -162,10 +199,14 @@ const PoolControl = () => {
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
                   <Thermometer className="w-3.5 h-3.5" /> Spa
                 </div>
-                <p className="text-3xl font-bold mt-1">
-                  {spa_temp != null ? spa_temp : "—"}
-                  <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
-                </p>
+                {showSpaTemp && spa_temp != null ? (
+                  <p className="text-3xl font-bold mt-1">
+                    {spa_temp}
+                    <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground mt-2">Spa off</p>
+                )}
               </CardContent>
             </Card>
           )}
@@ -223,26 +264,35 @@ const PoolControl = () => {
           </Card>
         )}
 
-        {features.map((f) => (
-          <Card key={f.key}>
-            <CardContent className="p-4 flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
-                <Droplets className="w-5 h-5 text-muted-foreground" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium">{f.label}</p>
-                <p className="text-xs text-muted-foreground">
-                  {quiet_active ? "Paused for quiet hours" : f.on ? "On" : "Tap to turn on"}
-                </p>
-              </div>
-              <Switch
-                checked={f.on === true}
-                disabled={quiet_active || toggleFeatureMutation.isPending}
-                onCheckedChange={(v) => toggleFeatureMutation.mutate({ key: f.key, on: v })}
-              />
-            </CardContent>
-          </Card>
-        ))}
+        {features.map((f) => {
+          const cooldown = cooldowns[f.key] || 0;
+          const Icon = getFeatureIcon(f.icon_key);
+          const subtitle = quiet_active
+            ? "Paused for quiet hours"
+            : cooldown > 0
+              ? `Available again in ${cooldown}s`
+              : f.on
+                ? "On"
+                : "Tap to turn on";
+          return (
+            <Card key={f.key}>
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                  <Icon className="w-5 h-5 text-muted-foreground" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium">{f.label}</p>
+                  <p className="text-xs text-muted-foreground">{subtitle}</p>
+                </div>
+                <Switch
+                  checked={f.on === true}
+                  disabled={quiet_active || cooldown > 0 || toggleFeatureMutation.isPending}
+                  onCheckedChange={(v) => toggleFeatureMutation.mutate({ key: f.key, on: v })}
+                />
+              </CardContent>
+            </Card>
+          );
+        })}
 
         {!home.controller_enabled && (
           <p className="text-xs text-center text-muted-foreground">
