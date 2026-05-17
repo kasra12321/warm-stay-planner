@@ -259,6 +259,7 @@ serve(async (req) => {
 
     if (action === "set-temp") {
       const temp = Number(body.temp);
+      const bodyType: "pool" | "spa" = body.body === "spa" ? "spa" : "pool";
       if (!Number.isFinite(temp) || temp < 50 || temp > 110) {
         return new Response(JSON.stringify({ error: "temp must be 50-110" }), {
           status: 400,
@@ -268,7 +269,7 @@ serve(async (req) => {
       try {
         const result = await callPi(
           "/api/pool/heater",
-          { ...credentials, temp },
+          { ...credentials, temp, body: bodyType },
           piUrl!,
           piToken!,
         );
@@ -284,6 +285,37 @@ serve(async (req) => {
           JSON.stringify({ error: e.message, error_kind: e.kind || "unknown" }),
           { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } },
         );
+      }
+    }
+
+    if (action === "list-circuits") {
+      try {
+        const result = await callPi("/api/pool/circuits", credentials, piUrl!, piToken!);
+        return new Response(JSON.stringify({ success: true, circuits: result?.circuits || [] }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message, error_kind: e.kind || "unknown" }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+    }
+
+    if (action === "set-circuit") {
+      const circuitId = Number(body.circuit_id);
+      const on = body.on === true;
+      if (!Number.isFinite(circuitId) || circuitId <= 0) {
+        return new Response(JSON.stringify({ error: "circuit_id required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      try {
+        const result = await callPi("/api/pool/circuit", { ...credentials, circuitId, on }, piUrl!, piToken!);
+        return new Response(JSON.stringify({ success: true, ...result }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      } catch (e: any) {
+        return new Response(JSON.stringify({ error: e.message, error_kind: e.kind || "unknown" }),
+          { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
       }
     }
 

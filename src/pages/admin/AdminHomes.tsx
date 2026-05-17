@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Plus, Pencil, Trash2, Home as HomeIcon, Upload, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Home as HomeIcon, Upload, Loader2, Copy, ExternalLink } from 'lucide-react';
+import HomeFeaturesEditor from '@/components/admin/HomeFeaturesEditor';
 
 const AdminHomes = () => {
   const queryClient = useQueryClient();
@@ -21,6 +22,9 @@ const AdminHomes = () => {
   const [slug, setSlug] = useState('');
   const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [hasSpa, setHasSpa] = useState(false);
+  const [spaMin, setSpaMin] = useState<string>('');
+  const [spaMax, setSpaMax] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: homes, isLoading } = useQuery({
@@ -35,12 +39,20 @@ const AdminHomes = () => {
   const saveMutation = useMutation({
     mutationFn: async () => {
       let homeId = editingHome?.id;
+      const payload: any = {
+        name,
+        slug,
+        internal_name: internalName || name,
+        has_spa: hasSpa,
+        spa_min_temp: spaMin === '' ? null : Number(spaMin),
+        spa_max_temp: spaMax === '' ? null : Number(spaMax),
+      };
 
       if (editingHome) {
-        const { error } = await supabase.from('homes').update({ name, slug, internal_name: internalName || name }).eq('id', homeId);
+        const { error } = await supabase.from('homes').update(payload).eq('id', homeId);
         if (error) throw error;
       } else {
-        const { data, error } = await supabase.from('homes').insert({ name, slug, internal_name: internalName || name }).select().single();
+        const { data, error } = await supabase.from('homes').insert(payload).select().single();
         if (error) throw error;
         homeId = data.id;
       }
@@ -92,6 +104,9 @@ const AdminHomes = () => {
     setSlug(home.slug);
     setPhotoFile(null);
     setPhotoPreview(home.cover_photo_url || null);
+    setHasSpa(!!home.has_spa);
+    setSpaMin(home.spa_min_temp != null ? String(home.spa_min_temp) : '');
+    setSpaMax(home.spa_max_temp != null ? String(home.spa_max_temp) : '');
     setDialogOpen(true);
   };
 
@@ -102,7 +117,15 @@ const AdminHomes = () => {
     setSlug('');
     setPhotoFile(null);
     setPhotoPreview(null);
+    setHasSpa(false);
+    setSpaMin('');
+    setSpaMax('');
     setDialogOpen(true);
+  };
+  const guestUrl = (s: string) => `${window.location.origin}/pool/${s}`;
+  const copyLink = (s: string) => {
+    navigator.clipboard.writeText(guestUrl(s));
+    toast.success('Guest link copied');
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -144,11 +167,20 @@ const AdminHomes = () => {
                   <div className="flex items-center gap-2">
                     <span className="font-semibold text-foreground">{home.name}</span>
                     <Badge variant={home.active ? 'default' : 'secondary'}>{home.active ? 'Active' : 'Inactive'}</Badge>
+                    {home.has_spa && <Badge variant="outline">Spa</Badge>}
                   </div>
                   {home.internal_name && home.internal_name !== home.name && (
                     <p className="text-sm text-muted-foreground">Internal: {home.internal_name}</p>
                   )}
                   <p className="text-xs text-muted-foreground">/{home.slug}</p>
+                  <div className="flex items-center gap-1 mt-1">
+                    <button onClick={() => copyLink(home.slug)} className="text-xs text-primary inline-flex items-center gap-1 hover:underline">
+                      <Copy className="w-3 h-3" /> Guest link
+                    </button>
+                    <a href={guestUrl(home.slug)} target="_blank" rel="noreferrer" className="text-xs text-muted-foreground hover:text-foreground">
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Switch checked={home.active} onCheckedChange={v => toggleActive(home.id, v)} />
@@ -165,7 +197,7 @@ const AdminHomes = () => {
         </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{editingHome ? 'Edit Property' : 'Add Property'}</DialogTitle>
             </DialogHeader>
@@ -204,6 +236,35 @@ const AdminHomes = () => {
                 <Input value={slug} onChange={e => setSlug(e.target.value)} placeholder="beach-house" />
                 <p className="text-xs text-muted-foreground">Used in URL: ?home={slug || 'your-slug'}</p>
               </div>
+
+              <div className="border-t pt-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Has spa</Label>
+                    <p className="text-xs text-muted-foreground">Show spa temp + adjuster on guest page</p>
+                  </div>
+                  <Switch checked={hasSpa} onCheckedChange={setHasSpa} />
+                </div>
+                {hasSpa && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label>Spa min (°F)</Label>
+                      <Input type="number" value={spaMin} onChange={e => setSpaMin(e.target.value)} placeholder="(global default)" />
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Spa max (°F)</Label>
+                      <Input type="number" value={spaMax} onChange={e => setSpaMax(e.target.value)} placeholder="(global default)" />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {editingHome && (
+                <div className="border-t pt-4">
+                  <Label className="block mb-2">Guest features</Label>
+                  <HomeFeaturesEditor home={editingHome} />
+                </div>
+              )}
 
               <Button onClick={() => saveMutation.mutate()} disabled={!name || !slug || saveMutation.isPending} className="w-full">
                 {saveMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}

@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDateDisplay } from '@/lib/pacific-time';
-import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer, Loader2, PowerOff, Flame } from 'lucide-react';
+import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer, Loader2, PowerOff, Flame, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 
 function timeAgo(iso: string | null): string {
@@ -57,7 +57,7 @@ const AdminOverview = () => {
     queryFn: async () => {
       const { data: homes, error: hErr } = await supabase
         .from('homes')
-        .select('id, name, baseline_temp, controller_type')
+        .select('id, name, slug, baseline_temp, controller_type')
         .eq('controller_enabled', true)
         .eq('active', true)
         .order('name');
@@ -288,6 +288,16 @@ const AdminOverview = () => {
                   <div key={home.id} className="flex items-start justify-between gap-3 border-b last:border-0 pb-3 last:pb-0">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{home.name}</div>
+                      <button
+                        onClick={() => {
+                          const url = `${window.location.origin}/pool/${home.slug}`;
+                          navigator.clipboard.writeText(url);
+                          toast.success('Guest link copied');
+                        }}
+                        className="text-xs text-primary inline-flex items-center gap-1 hover:underline mt-0.5"
+                      >
+                        <Copy className="w-3 h-3" /> /pool/{home.slug}
+                      </button>
                       {(() => {
                         const s = state as any;
                         return (
