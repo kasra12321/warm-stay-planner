@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { iconOptionsForKey, getFeatureIcon } from '@/lib/feature-icons';
 
 /**
  * Lets admin map guest-visible feature buttons to controller targets.
@@ -157,6 +158,29 @@ const HomeFeaturesEditor = ({ home }: Props) => {
                   className="h-8 font-mono text-xs"
                   placeholder="e.g. circuit:505, aux:3, heater:spa"
                 />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs">Guest icon</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {iconOptionsForKey(f.feature_key).map((opt) => {
+                    const Icon = opt.Icon;
+                    const selected = f.icon_key === opt.key;
+                    return (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => updateRow.mutate({ id: f.id, patch: { icon_key: selected ? null : opt.key } })}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-md border text-xs transition-colors ${
+                          selected ? 'border-primary bg-primary/10 text-foreground' : 'border-border bg-background text-muted-foreground hover:bg-muted'
+                        }`}
+                        title={opt.label}
+                      >
+                        <Icon className="w-3.5 h-3.5" />
+                        <span>{opt.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
