@@ -113,11 +113,22 @@ const HomeFeaturesEditor = ({ home }: Props) => {
 
       {discovered && (
         <div className="text-xs bg-muted/40 p-2 rounded">
-          <p className="font-medium mb-1">Available targets (copy into a feature):</p>
-          <ul className="space-y-0.5">
+          <p className="font-medium mb-1">Available targets — click "Use" to apply to a feature row:</p>
+          <ul className="space-y-1">
             {discovered.map(d => (
-              <li key={d.target} className="font-mono">
-                <code className="bg-background px-1 rounded">{d.target}</code> — {d.label}
+              <li key={d.target} className="flex items-center gap-2">
+                <code className="bg-background px-1 rounded font-mono">{d.target}</code>
+                <span className="text-muted-foreground">{d.label}</span>
+                {(features || []).map((f: any) => (
+                  <button
+                    key={f.id}
+                    type="button"
+                    className="ml-auto last:mr-0 text-[10px] px-1.5 py-0.5 rounded border bg-background hover:bg-muted"
+                    onClick={() => updateRow.mutate({ id: f.id, patch: { controller_target: d.target } })}
+                  >
+                    Use for "{f.label}"
+                  </button>
+                ))}
               </li>
             ))}
           </ul>

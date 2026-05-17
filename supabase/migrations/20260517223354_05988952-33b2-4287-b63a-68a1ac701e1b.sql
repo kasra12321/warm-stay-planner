@@ -1,0 +1,1 @@
+UPDATE public.home_features SET controller_target = split_part(controller_target, ' ', 1) WHERE controller_target ~ ' ';
