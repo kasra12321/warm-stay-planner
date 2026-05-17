@@ -99,7 +99,7 @@ serve(async (req) => {
       // List active mapped features
       const { data: features } = await supabase
         .from("home_features")
-        .select("id, feature_key, label, controller_target, sort_order")
+        .select("id, feature_key, label, controller_target, sort_order, icon_key")
         .eq("home_id", home.id)
         .eq("active", true)
         .order("sort_order");
@@ -135,7 +135,7 @@ serve(async (req) => {
           const v = liveStatus[`${target.slice(7)}_heater`];
           if (v != null) stateOn = String(v) === "1";
         }
-        return { key: f.feature_key, label: f.label, target, on: stateOn };
+        return { key: f.feature_key, label: f.label, target, on: stateOn, icon_key: f.icon_key || null };
       });
 
       // pool / spa temps + setpoints from live (preferred) or cached state
@@ -149,6 +149,26 @@ serve(async (req) => {
       const poolSetpoint = parseN(liveStatus.pool_set_point) ?? state?.last_actual_setpoint ?? null;
       const spaSetpoint = parseN(liveStatus.spa_set_point);
 
+      // Derive whether each body is actively circulating so the UI can hide
+      // stale temps when the pump is off. Returns null when we can't tell —
+      // in that case the UI falls back to showing the temp.
+      const bodyActive = (kind: "pool" | "spa"): boolean | null => {
+        const pumpVal = liveStatus[`${kind}_pump`];
+        if (pumpVal != null) return String(pumpVal) === "1";
+        if (Array.isArray(liveStatus.circuits)) {
+          const match = liveStatus.circuits.find((c: any) =>
+            String(c?.name || "").trim().toLowerCase() === kind
+          );
+          if (match) return !!match.state;
+        }
+        // ScreenLogic fallback: if heater is on, body must be circulating
+        const heater = liveStatus[`${kind}_heater`];
+        if (heater === "1") return true;
+        return null;
+      };
+      const poolActive = bodyActive("pool");
+      const spaActive = bodyActive("spa");
+
       return new Response(JSON.stringify({
         home: {
           name: home.name,
@@ -161,9 +181,12 @@ serve(async (req) => {
         },
         pool_temp: poolTemp,
         spa_temp: spaTemp,
+        pool_active: poolActive,
+        spa_active: spaActive,
         pool_setpoint: poolSetpoint,
         spa_setpoint: spaSetpoint,
         features: featuresOut,
+        live_ok: !!live,
         quiet_active: quietActive,
         quiet_end_label: quietEndDescription(quietEnd),
         allow_spa_temp_during_quiet: allowSpaTempDuringQuiet,
