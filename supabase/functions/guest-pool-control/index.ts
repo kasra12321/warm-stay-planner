@@ -267,11 +267,11 @@ serve(async (req) => {
       const fnName = home.controller_type === "screenlogic" ? "screenlogic-control" : "iaqualink-control";
       let payload: any = { home_id: home.id };
       if (target.startsWith("circuit:")) {
-        payload = { ...payload, action: "set-circuit", circuit_id: Number(target.slice(8)), on };
+        payload = { ...payload, action: "set-circuit", circuit_id: parseInt(target.slice(8), 10), on };
       } else if (target.startsWith("aux:")) {
-        payload = { ...payload, action: "set-aux", aux_index: Number(target.slice(4)), on };
+        payload = { ...payload, action: "set-aux", aux_index: parseInt(target.slice(4), 10), on };
       } else if (target.startsWith("heater:")) {
-        payload = { ...payload, action: "set-heater", heater: target.slice(7), on };
+        payload = { ...payload, action: "set-heater", heater: target.slice(7).trim().split(/\s+/)[0], on };
       } else {
         return new Response(JSON.stringify({ error: `Unknown target ${target}` }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
