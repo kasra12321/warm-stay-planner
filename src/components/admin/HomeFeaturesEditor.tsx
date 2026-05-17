@@ -7,7 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Plus, Trash2, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
-import { iconOptionsForKey, getFeatureIcon } from '@/lib/feature-icons';
+import { iconOptionsForKey } from '@/lib/feature-icons';
 
 /**
  * Lets admin map guest-visible feature buttons to controller targets.
