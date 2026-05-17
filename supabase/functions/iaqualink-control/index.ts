@@ -433,6 +433,97 @@ serve(async (req) => {
       });
     }
 
+    // Toggle a numbered aux (1-7) on/off. iAquaLink commands toggle, so we
+    // read state first and only send the command if the current state
+    // differs from the desired state. Returns the post-action state.
+    if (action === "set-aux" || action === "set-heater") {
+      const { home_id, on } = body;
+      const auxIndex = action === "set-aux" ? Number(body.aux_index) : null;
+      const heaterKind = action === "set-heater" ? String(body.heater || "spa") : null; // "spa" | "pool"
+      if (!home_id || typeof on !== "boolean") {
+        return new Response(JSON.stringify({ error: "home_id and on(boolean) required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (action === "set-aux" && (!Number.isFinite(auxIndex!) || auxIndex! < 1 || auxIndex! > 7)) {
+        return new Response(JSON.stringify({ error: "aux_index must be 1-7" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: home } = await supabase.from("homes").select("*").eq("id", home_id).maybeSingle();
+      if (!home?.iaqualink_serial) {
+        return new Response(JSON.stringify({ error: "Home has no iAquaLink serial" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const stateKey = action === "set-aux" ? `aux_${auxIndex}_state` : (heaterKind === "pool" ? "pool_heater" : "spa_heater");
+      const cmd = action === "set-aux" ? `set_aux_${auxIndex}` : (heaterKind === "pool" ? "set_pool_heater" : "set_spa_heater");
+
+      // Read current state
+      const beforeRes = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+      if (beforeRes.status >= 400) {
+        return new Response(JSON.stringify({ error: `get_home ${beforeRes.status}` }), {
+          status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const flatten = (raw: any): Record<string, string> => {
+        const flat: Record<string, string> = {};
+        for (const row of (raw?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        return flat;
+      };
+      const beforeFlat = flatten(beforeRes.body);
+      const currentOn = beforeFlat[stateKey] === "1";
+      let toggled = false;
+      if (currentOn !== on) {
+        const cmdRes = await withRelogin(supabase, (sid) => iaquaSendCommand(home.iaqualink_serial, sid, cmd));
+        if (cmdRes.status >= 400) {
+          return new Response(JSON.stringify({ error: `${cmd} ${cmdRes.status}: ${JSON.stringify(cmdRes.body)}` }), {
+            status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        toggled = true;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      // Verify
+      let verified = !toggled; // if no toggle needed, state already matches
+      let finalState = currentOn;
+      try {
+        const after = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+        const afterFlat = flatten(after.body);
+        finalState = afterFlat[stateKey] === "1";
+        verified = finalState === on;
+      } catch { /* ignore */ }
+      return new Response(JSON.stringify({ success: true, verified, state_key: stateKey, state: finalState, toggled }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Return the list of toggleable items detected on this iAquaLink panel
+    // (aux_N labels + heater states) so admin UI can build feature mapping
+    // dropdowns. We derive the labels from the panel's one_touch / aux name
+    // fields when present, otherwise fall back to "Aux N".
+    if (action === "list-controls") {
+      const { home_id } = body;
+      if (!home_id) return new Response(JSON.stringify({ error: "home_id required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: home } = await supabase.from("homes").select("*").eq("id", home_id).maybeSingle();
+      if (!home?.iaqualink_serial) return new Response(JSON.stringify({ error: "Home has no iAquaLink serial" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const r = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+      if (r.status >= 400) return new Response(JSON.stringify({ error: `get_home ${r.status}` }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const flat: Record<string, string> = {};
+      for (const row of ((r.body as any)?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+      const controls: Array<{ target: string; label: string; state?: string }> = [];
+      for (let i = 1; i <= 7; i++) {
+        const labelKey = `aux_${i}_label`;
+        const stateKey = `aux_${i}_state`;
+        if (flat[stateKey] != null || flat[labelKey]) {
+          controls.push({ target: `aux:${i}`, label: flat[labelKey] || `Aux ${i}`, state: flat[stateKey] });
+        }
+      }
+      if (flat.pool_heater != null) controls.push({ target: "heater:pool", label: "Pool Heater", state: flat.pool_heater });
+      if (flat.spa_heater != null) controls.push({ target: "heater:spa", label: "Spa Heater", state: flat.spa_heater });
+      return new Response(JSON.stringify({ success: true, controls }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
     return new Response(JSON.stringify({ error: "Unknown action" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
