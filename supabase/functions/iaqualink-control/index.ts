@@ -63,6 +63,19 @@ async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
+// Generic command sender. iAquaLink toggle commands (set_aux_X, set_pool_heater,
+// set_spa_heater, set_pool_pump, etc.) just toggle current state — they don't
+// accept an on/off arg. Caller is responsible for reading state first if it
+// needs to enforce a desired absolute state.
+async function iaquaSendCommand(serial: string, sessionId: string, command: string) {
+  const url =
+    `${SESSION_URL}?actionID=command&command=${encodeURIComponent(command)}` +
+    `&serial=${encodeURIComponent(serial)}` +
+    `&sessionID=${encodeURIComponent(sessionId)}`;
+  const r = await fetch(url);
+  return { status: r.status, body: r.ok ? await r.json() : await r.text() };
+}
+
 // Reusable helper: gets a valid session, re-logging in if needed
 async function getValidSession(supabase: any): Promise<{ session_id: string; auth_token: string; user_id_external: string; email: string }> {
   const email = Deno.env.get("IAQUALINK_EMAIL");
