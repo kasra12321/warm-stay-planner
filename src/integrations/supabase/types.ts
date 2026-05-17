@@ -38,6 +38,50 @@ export type Database = {
         }
         Relationships: []
       }
+      home_features: {
+        Row: {
+          active: boolean
+          controller_target: string
+          created_at: string
+          feature_key: string
+          home_id: string
+          id: string
+          label: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          controller_target: string
+          created_at?: string
+          feature_key: string
+          home_id: string
+          id?: string
+          label: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          controller_target?: string
+          created_at?: string
+          feature_key?: string
+          home_id?: string
+          id?: string
+          label?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_features_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       home_pool_state: {
         Row: {
           created_at: string
@@ -110,6 +154,7 @@ export type Database = {
           created_at: string
           eco_mode_enabled: boolean
           eco_temp: number
+          has_spa: boolean
           hospitable_property_id: string | null
           iaqualink_serial: string | null
           iaqualink_temp_sensor_index: number
@@ -119,6 +164,8 @@ export type Database = {
           screenlogic_password: string | null
           screenlogic_system_name: string | null
           slug: string
+          spa_max_temp: number | null
+          spa_min_temp: number | null
           updated_at: string
         }
         Insert: {
@@ -130,6 +177,7 @@ export type Database = {
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
+          has_spa?: boolean
           hospitable_property_id?: string | null
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
@@ -139,6 +187,8 @@ export type Database = {
           screenlogic_password?: string | null
           screenlogic_system_name?: string | null
           slug: string
+          spa_max_temp?: number | null
+          spa_min_temp?: number | null
           updated_at?: string
         }
         Update: {
@@ -150,6 +200,7 @@ export type Database = {
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
+          has_spa?: boolean
           hospitable_property_id?: string | null
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
@@ -159,6 +210,8 @@ export type Database = {
           screenlogic_password?: string | null
           screenlogic_system_name?: string | null
           slug?: string
+          spa_max_temp?: number | null
+          spa_min_temp?: number | null
           updated_at?: string
         }
         Relationships: []
@@ -403,10 +456,15 @@ export type Database = {
           admin_calendar_email: string | null
           admin_email: string | null
           admin_sms_number: string | null
+          allow_spa_temp_during_quiet: boolean
           apple_cash_instructions: string | null
           apple_cash_phone: string | null
           created_at: string
           id: string
+          quiet_end_hour: number
+          quiet_start_hour: number
+          spa_max_temp_default: number
+          spa_min_temp_default: number
           twilio_from_number: string | null
           updated_at: string
           venmo_handle: string | null
@@ -417,10 +475,15 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
           created_at?: string
           id?: string
+          quiet_end_hour?: number
+          quiet_start_hour?: number
+          spa_max_temp_default?: number
+          spa_min_temp_default?: number
           twilio_from_number?: string | null
           updated_at?: string
           venmo_handle?: string | null
@@ -431,10 +494,15 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
           created_at?: string
           id?: string
+          quiet_end_hour?: number
+          quiet_start_hour?: number
+          spa_max_temp_default?: number
+          spa_min_temp_default?: number
           twilio_from_number?: string | null
           updated_at?: string
           venmo_handle?: string | null
