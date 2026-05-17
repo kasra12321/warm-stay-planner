@@ -15,6 +15,7 @@ import AdminHeatSettings from "./pages/admin/AdminHeatSettings";
 import AdminPaymentSettings from "./pages/admin/AdminPaymentSettings";
 import AdminNotificationSettings from "./pages/admin/AdminNotificationSettings";
 import AdminIAquaLink from "./pages/admin/AdminIAquaLink";
+import PoolControl from "./pages/guest/PoolControl";
 
 const queryClient = new QueryClient();
 
@@ -26,6 +27,7 @@ const App = () => (
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Index />} />
+          <Route path="/pool/:slug" element={<PoolControl />} />
           <Route path="/admin/login" element={<AdminLogin />} />
           <Route path="/admin" element={<AdminLayout />}>
             <Route index element={<AdminOverview />} />
