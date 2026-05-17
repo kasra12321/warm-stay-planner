@@ -45,6 +45,7 @@ export type Database = {
           created_at: string
           feature_key: string
           home_id: string
+          icon_key: string | null
           id: string
           label: string
           sort_order: number
@@ -56,6 +57,7 @@ export type Database = {
           created_at?: string
           feature_key: string
           home_id: string
+          icon_key?: string | null
           id?: string
           label: string
           sort_order?: number
@@ -67,6 +69,7 @@ export type Database = {
           created_at?: string
           feature_key?: string
           home_id?: string
+          icon_key?: string | null
           id?: string
           label?: string
           sort_order?: number
