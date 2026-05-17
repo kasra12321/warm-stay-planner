@@ -125,14 +125,16 @@ serve(async (req) => {
         let stateOn: boolean | null = null;
         const target = f.controller_target || "";
         if (target.startsWith("circuit:") && Array.isArray(liveStatus.circuits)) {
-          const cid = Number(target.slice(8));
+          const cid = parseInt(target.slice(8), 10);
           const c = liveStatus.circuits.find((c: any) => c.id === cid);
           if (c) stateOn = !!c.state;
         } else if (target.startsWith("aux:")) {
-          const v = liveStatus[`aux_${target.slice(4)}_state`];
+          const idx = parseInt(target.slice(4), 10);
+          const v = liveStatus[`aux_${idx}_state`];
           if (v != null) stateOn = String(v) === "1";
         } else if (target.startsWith("heater:")) {
-          const v = liveStatus[`${target.slice(7)}_heater`];
+          const kind = target.slice(7).trim().split(/\s+/)[0];
+          const v = liveStatus[`${kind}_heater`];
           if (v != null) stateOn = String(v) === "1";
         }
         return { key: f.feature_key, label: f.label, target, on: stateOn, icon_key: f.icon_key || null };
