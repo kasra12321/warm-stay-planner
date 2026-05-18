@@ -23,6 +23,12 @@ export function isSameDayWarning(dateStr: string): boolean {
   return getPacificHour() >= 12;
 }
 
+export function isSameDayCutoff(dateStr: string): boolean {
+  const today = getTodayPacific();
+  if (dateStr !== today) return false;
+  return getPacificHour() >= 15;
+}
+
 export function formatDateDisplay(dateStr: string): string {
   const [year, month, day] = dateStr.split('-').map(Number);
   const date = new Date(year, month - 1, day);

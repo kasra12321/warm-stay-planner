@@ -38,6 +38,17 @@ serve(async (req) => {
     const blockedSet = new Set((blocked || []).map((b: any) => b.date));
     const orderDates = order.order_dates as any[];
 
+    // Hard cutoff: no same-day bookings after 3 PM Pacific
+    const nowPacific = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+    const todayPacific = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+    if (nowPacific.getHours() >= 15) {
+      for (const od of orderDates) {
+        if (od.date === todayPacific) {
+          throw new Error("Same-day bookings close at 3 PM. Please choose another date.");
+        }
+      }
+    }
+
     for (const od of orderDates) {
       if (blockedSet.has(od.date)) {
         throw new Error(`Date ${od.date} is no longer available`);
