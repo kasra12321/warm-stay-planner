@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useHeatingOptions, useBlockedDates } from '@/hooks/useData';
 import type { SelectedDate, HeatingOption } from '@/lib/types';
-import { isSameDayWarning, formatDateDisplay, getTodayPacific } from '@/lib/pacific-time';
+import { isSameDayWarning, isSameDayCutoff, formatDateDisplay, getTodayPacific } from '@/lib/pacific-time';
 import { ArrowLeft } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 
@@ -58,6 +58,7 @@ export function DateSelection({
   const handleDayClick = (dateStr: string) => {
     if (blockedSet.has(dateStr)) return;
     if (dateStr < todayStr) return;
+    if (isSameDayCutoff(dateStr)) return;
 
     const existing = selectedMap.get(dateStr);
     if (existing) {
@@ -103,7 +104,7 @@ export function DateSelection({
         <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3">
           <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
           <p className="text-sm text-warning-foreground">
-            The pool takes a few hours to heat up. We don't recommend purchasing same-day pool heat after 12 PM, but we'll do our best.
+            Heads up: you're booking same-day heating after 12 PM. We'll do our best, but the pool may not reach your selected temperature by the end of the day. Same-day bookings close at 3 PM.
           </p>
         </div>
       )}
@@ -135,8 +136,9 @@ export function DateSelection({
             const dateStr = `${currentMonth.year}-${String(currentMonth.month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const isPast = dateStr < todayStr;
             const isBlocked = blockedSet.has(dateStr);
+            const isCutoff = isSameDayCutoff(dateStr);
             const selected = selectedMap.get(dateStr);
-            const isDisabled = isPast || isBlocked;
+            const isDisabled = isPast || isBlocked || isCutoff;
 
             return (
               <button
@@ -204,7 +206,7 @@ export function DateSelection({
               <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3 mb-2">
                 <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-warning-foreground">
-                  Same-day heating after 12 PM — we'll do our best!
+                  You're booking same-day heating after 12 PM. We'll do our best, but the pool may not reach your selected temperature by the end of the day. Same-day bookings close at 3 PM.
                 </p>
               </div>
             )}
