@@ -64,6 +64,29 @@ async function iaquaGetOneTouch(serial: string, sessionId: string) {
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
+// Parse the iAquaLink onetouch_screen payload into a structured list.
+// Shape returned by iAquaLink:
+//   onetouch_screen: [
+//     { status: "Online" }, { response: "..." },
+//     { onetouch_1: [{ status: "1" }, { state: "0" }, { label: "All OFF" }] },
+//     { onetouch_2: [...] }, ...
+//   ]
+// `status` "1" means the macro is configured on the panel, "0" means unused.
+function parseOneTouchMacros(otScreen: any[]): Array<{ index: number; status: string; state: string; label: string }> {
+  const out: Array<{ index: number; status: string; state: string; label: string }> = [];
+  for (const row of otScreen || []) {
+    for (const [k, v] of Object.entries(row || {})) {
+      const m = /^onetouch_(\d+)$/.exec(k);
+      if (!m || !Array.isArray(v)) continue;
+      const idx = parseInt(m[1], 10);
+      const flat: Record<string, string> = {};
+      for (const sub of v as any[]) for (const [sk, sv] of Object.entries(sub || {})) flat[sk] = String(sv);
+      out.push({ index: idx, status: flat.status ?? "", state: flat.state ?? "", label: flat.label ?? `OneTouch ${idx}` });
+    }
+  }
+  return out;
+}
+
 async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number, tempIndex: 1 | 2 = 1) {
   const param = tempIndex === 2 ? "temp2" : "temp1";
   const url =
@@ -364,8 +387,11 @@ serve(async (req) => {
       try {
         const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
         if (ot.status < 400) {
-          const otScreen = (ot.body as any)?.onetouch_screen || [];
-          for (const row of otScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+          for (const m of parseOneTouchMacros((ot.body as any)?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+            flat[`onetouch_${m.index}_label`] = m.label;
+            flat[`onetouch_${m.index}_status`] = m.status;
+          }
         }
       } catch { /* ignore */ }
       // Normalize the active set point based on the configured sensor index.
@@ -504,8 +530,13 @@ serve(async (req) => {
       }
       const flatten = (raw: any): Record<string, string> => {
         const flat: Record<string, string> = {};
-        const rows = isOneTouch ? (raw?.onetouch_screen || []) : (raw?.home_screen || []);
-        for (const row of rows) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        if (isOneTouch) {
+          for (const m of parseOneTouchMacros(raw?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+          }
+        } else {
+          for (const row of (raw?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        }
         return flat;
       };
       const beforeFlat = flatten(beforeRes.body);
@@ -561,19 +592,18 @@ serve(async (req) => {
       if (flat.pool_heater != null) controls.push({ target: "heater:pool", label: "Pool Heater", state: flat.pool_heater });
       if (flat.spa_heater != null) controls.push({ target: "heater:spa", label: "Spa Heater", state: flat.spa_heater });
       // Also list any configured one-touch macros so admins can map them as
-      // guest-facing features. One-touches that have no label are skipped.
+      // guest-facing features. iAquaLink returns onetouch_screen as an array
+      // of rows like { onetouch_N: [{status}, {state}, {label}] }. We only
+      // surface macros whose status == "1" (configured on the panel).
       try {
         const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
         if (ot.status < 400) {
-          const otFlat: Record<string, string> = {};
-          for (const row of ((ot.body as any)?.onetouch_screen || [])) for (const [k, v] of Object.entries(row)) otFlat[k] = String(v);
-          for (let i = 1; i <= 12; i++) {
-            const labelKey = `onetouch_${i}_label`;
-            const stateKey = `onetouch_${i}_state`;
-            const label = otFlat[labelKey];
-            // Skip unconfigured macros (no label or label is just "Onetouch N")
-            if (!label || /^onetouch[\s_]?\d+$/i.test(label)) continue;
-            controls.push({ target: `onetouch:${i}`, label, state: otFlat[stateKey] });
+          const macros = parseOneTouchMacros((ot.body as any)?.onetouch_screen || []);
+          for (const m of macros) {
+            if (m.status !== "1") continue;
+            // Skip placeholder labels like "OneTouch 4" / "ONETOUCH 5".
+            if (/^onetouch\s*\d+$/i.test(m.label)) continue;
+            controls.push({ target: `onetouch:${m.index}`, label: m.label, state: m.state });
           }
         }
       } catch { /* ignore */ }
