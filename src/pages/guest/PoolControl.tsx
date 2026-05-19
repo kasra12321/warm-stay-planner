@@ -51,25 +51,30 @@ const PoolControl = () => {
   const { slug = "" } = useParams<{ slug: string }>();
   const qc = useQueryClient();
   const [spaTarget, setSpaTarget] = useState<number | null>(null);
-  // Per-feature cooldown countdown (seconds remaining) keyed by feature key.
-  const [cooldowns, setCooldowns] = useState<Record<string, number>>({});
+  // Per-feature cooldown end timestamps (ms epoch) keyed by feature key.
+  const [cooldownEnds, setCooldownEnds] = useState<Record<string, number>>({});
+  const [now, setNow] = useState<number>(() => Date.now());
 
   useEffect(() => {
-    if (Object.keys(cooldowns).length === 0) return;
-    const id = setInterval(() => {
-      setCooldowns((prev) => {
-        const next: Record<string, number> = {};
-        let changed = false;
-        for (const [k, v] of Object.entries(prev)) {
-          const nv = v - 1;
-          if (nv > 0) next[k] = nv;
-          else changed = true;
-        }
-        return changed || Object.keys(next).length !== Object.keys(prev).length ? next : prev;
-      });
-    }, 1000);
+    const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [cooldowns]);
+  }, []);
+
+  // Compute remaining seconds per feature, and prune expired entries.
+  const cooldowns: Record<string, number> = {};
+  for (const [k, end] of Object.entries(cooldownEnds)) {
+    const remaining = Math.max(0, Math.ceil((end - now) / 1000));
+    if (remaining > 0) cooldowns[k] = remaining;
+  }
+  useEffect(() => {
+    const expiredKeys = Object.entries(cooldownEnds).filter(([, end]) => end <= now).map(([k]) => k);
+    if (expiredKeys.length === 0) return;
+    setCooldownEnds((prev) => {
+      const next = { ...prev };
+      for (const k of expiredKeys) delete next[k];
+      return next;
+    });
+  }, [now, cooldownEnds]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["guest-pool", slug],
@@ -117,7 +122,7 @@ const PoolControl = () => {
     },
     onSuccess: ({ key }) => {
       toast.success("Updated");
-      setCooldowns((prev) => ({ ...prev, [key]: 15 }));
+      setCooldownEnds((prev) => ({ ...prev, [key]: Date.now() + 15000 }));
       setTimeout(() => qc.invalidateQueries({ queryKey: ["guest-pool", slug] }), 2000);
     },
     onError: (e: any) => toast.error(e.message),
