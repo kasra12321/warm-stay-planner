@@ -387,8 +387,11 @@ serve(async (req) => {
       try {
         const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
         if (ot.status < 400) {
-          const otScreen = (ot.body as any)?.onetouch_screen || [];
-          for (const row of otScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+          for (const m of parseOneTouchMacros((ot.body as any)?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+            flat[`onetouch_${m.index}_label`] = m.label;
+            flat[`onetouch_${m.index}_status`] = m.status;
+          }
         }
       } catch { /* ignore */ }
       // Normalize the active set point based on the configured sensor index.
