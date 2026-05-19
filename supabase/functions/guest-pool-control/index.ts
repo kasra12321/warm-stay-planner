@@ -278,6 +278,8 @@ serve(async (req) => {
         payload = { ...payload, action: "set-aux", aux_index: parseInt(target.slice(4), 10), on };
       } else if (target.startsWith("heater:")) {
         payload = { ...payload, action: "set-heater", heater: target.slice(7).trim().split(/\s+/)[0], on };
+      } else if (target.startsWith("onetouch:")) {
+        payload = { ...payload, action: "set-onetouch", onetouch_index: parseInt(target.slice(9), 10), on };
       } else {
         return new Response(JSON.stringify({ error: `Unknown target ${target}` }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
