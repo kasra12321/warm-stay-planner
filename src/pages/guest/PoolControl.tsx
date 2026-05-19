@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
@@ -210,6 +210,16 @@ const PoolControl = () => {
               </CardContent>
             </Card>
           )}
+        </div>
+
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+          <Thermometer className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
+          <p className="text-muted-foreground">
+            If 81°F isn't warm enough, we offer the option to heat the pool further to help cover the additional natural gas cost.{" "}
+            <Link to="/" className="text-primary underline underline-offset-2">
+              Add pool heating
+            </Link>
+          </p>
         </div>
 
         {home.has_spa && (

@@ -1,15 +1,15 @@
-## Same-day booking changes
+## Add pool heat note to guest pool control page
 
-**1. Stronger warning after 12 PM (Pacific)**
-Update the warning copy shown in `src/components/guest/DateSelection.tsx` (both the banner and the drawer):
+On `/pool/:slug` (the spa/pool on-off controls page), add a small informational note letting guests know they can opt into additional heating if the baseline temp isn't warm enough, linking to the existing booking flow at `/`.
 
-> "Heads up: you're booking same-day heating after 12 PM. We'll do our best, but the pool may not reach your selected temperature by the end of the day."
+### Placement
+Insert directly under the Pool/Spa temperature grid in `src/pages/guest/PoolControl.tsx`, above the spa target and feature cards.
 
-Style stays the same (warning amber), just clearer wording.
+### Design
+- Subtle card using existing tokens (`border-border bg-muted/40`), matching the muted/quiet-hours note style already on this page rather than the primary-tinted style — keeps it informational, not promotional.
+- Small thermometer icon + copy:
+  - "If 81°F isn't warm enough, we offer the option to heat the pool further to help cover the additional natural gas cost."
+  - Inline link (text-primary underline) "Add pool heating" → navigates to `/` via `react-router-dom` `Link`.
 
-**2. Hard cutoff at 3 PM (Pacific) for same-day bookings**
-- Add `isSameDayCutoff(dateStr)` helper in `src/lib/pacific-time.ts` — returns true when `dateStr === today` and Pacific hour ≥ 15.
-- In `DateSelection.tsx`: treat today as disabled (same visual style as past/blocked dates) once it's past 3 PM Pacific. Clicking it does nothing.
-- Server-side guard: in `supabase/functions/create-stripe-session/index.ts`, reject any order containing today's date when Pacific time ≥ 3 PM, so the cutoff can't be bypassed by a stale page.
-
-**Out of scope:** no changes to multi-day bookings, pricing, or any other date logic.
+### Out of scope
+- No backend changes, no new routes, no copy changes elsewhere.
