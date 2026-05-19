@@ -562,8 +562,10 @@ serve(async (req) => {
       if (flat.spa_heater != null) controls.push({ target: "heater:spa", label: "Spa Heater", state: flat.spa_heater });
       // Also list any configured one-touch macros so admins can map them as
       // guest-facing features. One-touches that have no label are skipped.
+      let onetouch_debug: any = null;
       try {
         const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
+        onetouch_debug = { status: ot.status, body: ot.body };
         if (ot.status < 400) {
           const otFlat: Record<string, string> = {};
           for (const row of ((ot.body as any)?.onetouch_screen || [])) for (const [k, v] of Object.entries(row)) otFlat[k] = String(v);
@@ -571,13 +573,12 @@ serve(async (req) => {
             const labelKey = `onetouch_${i}_label`;
             const stateKey = `onetouch_${i}_state`;
             const label = otFlat[labelKey];
-            // Skip unconfigured macros (no label or label is just "Onetouch N")
-            if (!label || /^onetouch[\s_]?\d+$/i.test(label)) continue;
+            if (!label) continue;
             controls.push({ target: `onetouch:${i}`, label, state: otFlat[stateKey] });
           }
         }
-      } catch { /* ignore */ }
-      return new Response(JSON.stringify({ success: true, controls }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      } catch (e: any) { onetouch_debug = { error: e?.message || String(e) }; }
+      return new Response(JSON.stringify({ success: true, controls, onetouch_debug }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     return new Response(JSON.stringify({ error: "Unknown action" }), {
