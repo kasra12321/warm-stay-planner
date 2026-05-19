@@ -457,10 +457,11 @@ serve(async (req) => {
     // Toggle a numbered aux (1-7) on/off. iAquaLink commands toggle, so we
     // read state first and only send the command if the current state
     // differs from the desired state. Returns the post-action state.
-    if (action === "set-aux" || action === "set-heater") {
+    if (action === "set-aux" || action === "set-heater" || action === "set-onetouch") {
       const { home_id, on } = body;
       const auxIndex = action === "set-aux" ? Number(body.aux_index) : null;
       const heaterKind = action === "set-heater" ? String(body.heater || "spa") : null; // "spa" | "pool"
+      const onetouchIndex = action === "set-onetouch" ? Number(body.onetouch_index) : null;
       if (!home_id || typeof on !== "boolean") {
         return new Response(JSON.stringify({ error: "home_id and on(boolean) required" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -471,17 +472,31 @@ serve(async (req) => {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+      if (action === "set-onetouch" && (!Number.isFinite(onetouchIndex!) || onetouchIndex! < 1 || onetouchIndex! > 12)) {
+        return new Response(JSON.stringify({ error: "onetouch_index must be 1-12" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
       const { data: home } = await supabase.from("homes").select("*").eq("id", home_id).maybeSingle();
       if (!home?.iaqualink_serial) {
         return new Response(JSON.stringify({ error: "Home has no iAquaLink serial" }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const stateKey = action === "set-aux" ? `aux_${auxIndex}_state` : (heaterKind === "pool" ? "pool_heater" : "spa_heater");
-      const cmd = action === "set-aux" ? `set_aux_${auxIndex}` : (heaterKind === "pool" ? "set_pool_heater" : "set_spa_heater");
+      const stateKey =
+        action === "set-aux" ? `aux_${auxIndex}_state`
+        : action === "set-onetouch" ? `onetouch_${onetouchIndex}_state`
+        : (heaterKind === "pool" ? "pool_heater" : "spa_heater");
+      const cmd =
+        action === "set-aux" ? `set_aux_${auxIndex}`
+        : action === "set-onetouch" ? `set_onetouch_${onetouchIndex}`
+        : (heaterKind === "pool" ? "set_pool_heater" : "set_spa_heater");
+      const isOneTouch = action === "set-onetouch";
 
-      // Read current state
-      const beforeRes = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+      // Read current state (from home_screen for aux/heater, onetouch_screen for one-touch)
+      const beforeRes = await withRelogin(supabase, (sid) =>
+        isOneTouch ? iaquaGetOneTouch(home.iaqualink_serial, sid) : iaquaGetHome(home.iaqualink_serial, sid)
+      );
       if (beforeRes.status >= 400) {
         return new Response(JSON.stringify({ error: `get_home ${beforeRes.status}` }), {
           status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -489,7 +504,8 @@ serve(async (req) => {
       }
       const flatten = (raw: any): Record<string, string> => {
         const flat: Record<string, string> = {};
-        for (const row of (raw?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        const rows = isOneTouch ? (raw?.onetouch_screen || []) : (raw?.home_screen || []);
+        for (const row of rows) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
         return flat;
       };
       const beforeFlat = flatten(beforeRes.body);
@@ -509,7 +525,9 @@ serve(async (req) => {
       let verified = !toggled; // if no toggle needed, state already matches
       let finalState = currentOn;
       try {
-        const after = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+        const after = await withRelogin(supabase, (sid) =>
+          isOneTouch ? iaquaGetOneTouch(home.iaqualink_serial, sid) : iaquaGetHome(home.iaqualink_serial, sid)
+        );
         const afterFlat = flatten(after.body);
         finalState = afterFlat[stateKey] === "1";
         verified = finalState === on;
@@ -542,6 +560,23 @@ serve(async (req) => {
       }
       if (flat.pool_heater != null) controls.push({ target: "heater:pool", label: "Pool Heater", state: flat.pool_heater });
       if (flat.spa_heater != null) controls.push({ target: "heater:spa", label: "Spa Heater", state: flat.spa_heater });
+      // Also list any configured one-touch macros so admins can map them as
+      // guest-facing features. One-touches that have no label are skipped.
+      try {
+        const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
+        if (ot.status < 400) {
+          const otFlat: Record<string, string> = {};
+          for (const row of ((ot.body as any)?.onetouch_screen || [])) for (const [k, v] of Object.entries(row)) otFlat[k] = String(v);
+          for (let i = 1; i <= 12; i++) {
+            const labelKey = `onetouch_${i}_label`;
+            const stateKey = `onetouch_${i}_state`;
+            const label = otFlat[labelKey];
+            // Skip unconfigured macros (no label or label is just "Onetouch N")
+            if (!label || /^onetouch[\s_]?\d+$/i.test(label)) continue;
+            controls.push({ target: `onetouch:${i}`, label, state: otFlat[stateKey] });
+          }
+        }
+      } catch { /* ignore */ }
       return new Response(JSON.stringify({ success: true, controls }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
