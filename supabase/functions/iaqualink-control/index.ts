@@ -52,6 +52,18 @@ async function iaquaGetHome(serial: string, sessionId: string) {
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
+// Fetch the one-touch macro list/state for an iAquaLink panel. Returns the
+// raw response body; one-touches appear under `onetouch_screen` (similar
+// shape to `home_screen`) with keys like onetouch_N_label / onetouch_N_state.
+async function iaquaGetOneTouch(serial: string, sessionId: string) {
+  const url =
+    `${SESSION_URL}?actionID=command&command=get_onetouch` +
+    `&serial=${encodeURIComponent(serial)}` +
+    `&sessionID=${encodeURIComponent(sessionId)}`;
+  const r = await fetch(url);
+  return { status: r.status, body: r.ok ? await r.json() : await r.text() };
+}
+
 async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number, tempIndex: 1 | 2 = 1) {
   const param = tempIndex === 2 ? "temp2" : "temp1";
   const url =
