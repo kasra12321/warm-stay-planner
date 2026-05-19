@@ -359,6 +359,15 @@ serve(async (req) => {
       for (const row of homeScreen) {
         for (const [k, v] of Object.entries(row)) flat[k] = String(v);
       }
+      // Also merge one-touch macro state so the UI can reflect which
+      // one-touches are currently running.
+      try {
+        const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
+        if (ot.status < 400) {
+          const otScreen = (ot.body as any)?.onetouch_screen || [];
+          for (const row of otScreen) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        }
+      } catch { /* ignore */ }
       // Normalize the active set point based on the configured sensor index.
       // index 1 -> temp1 -> spa_set_point on dual pool/spa controllers, or
       //                     pool_set_point on pool-only controllers
