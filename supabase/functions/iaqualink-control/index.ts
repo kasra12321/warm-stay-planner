@@ -64,6 +64,29 @@ async function iaquaGetOneTouch(serial: string, sessionId: string) {
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
+// Parse the iAquaLink onetouch_screen payload into a structured list.
+// Shape returned by iAquaLink:
+//   onetouch_screen: [
+//     { status: "Online" }, { response: "..." },
+//     { onetouch_1: [{ status: "1" }, { state: "0" }, { label: "All OFF" }] },
+//     { onetouch_2: [...] }, ...
+//   ]
+// `status` "1" means the macro is configured on the panel, "0" means unused.
+function parseOneTouchMacros(otScreen: any[]): Array<{ index: number; status: string; state: string; label: string }> {
+  const out: Array<{ index: number; status: string; state: string; label: string }> = [];
+  for (const row of otScreen || []) {
+    for (const [k, v] of Object.entries(row || {})) {
+      const m = /^onetouch_(\d+)$/.exec(k);
+      if (!m || !Array.isArray(v)) continue;
+      const idx = parseInt(m[1], 10);
+      const flat: Record<string, string> = {};
+      for (const sub of v as any[]) for (const [sk, sv] of Object.entries(sub || {})) flat[sk] = String(sv);
+      out.push({ index: idx, status: flat.status ?? "", state: flat.state ?? "", label: flat.label ?? `OneTouch ${idx}` });
+    }
+  }
+  return out;
+}
+
 async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number, tempIndex: 1 | 2 = 1) {
   const param = tempIndex === 2 ? "temp2" : "temp1";
   const url =
