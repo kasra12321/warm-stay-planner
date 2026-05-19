@@ -136,6 +136,10 @@ serve(async (req) => {
           const kind = target.slice(7).trim().split(/\s+/)[0];
           const v = liveStatus[`${kind}_heater`];
           if (v != null) stateOn = String(v) === "1";
+        } else if (target.startsWith("onetouch:")) {
+          const idx = parseInt(target.slice(9), 10);
+          const v = liveStatus[`onetouch_${idx}_state`];
+          if (v != null) stateOn = String(v) === "1";
         }
         return { key: f.feature_key, label: f.label, target, on: stateOn, icon_key: f.icon_key || null };
       });
