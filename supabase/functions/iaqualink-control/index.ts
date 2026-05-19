@@ -530,8 +530,13 @@ serve(async (req) => {
       }
       const flatten = (raw: any): Record<string, string> => {
         const flat: Record<string, string> = {};
-        const rows = isOneTouch ? (raw?.onetouch_screen || []) : (raw?.home_screen || []);
-        for (const row of rows) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        if (isOneTouch) {
+          for (const m of parseOneTouchMacros(raw?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+          }
+        } else {
+          for (const row of (raw?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        }
         return flat;
       };
       const beforeFlat = flatten(beforeRes.body);
