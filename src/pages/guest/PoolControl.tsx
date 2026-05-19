@@ -216,7 +216,7 @@ const PoolControl = () => {
           <Thermometer className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
           <p className="text-muted-foreground">
             If 81°F isn't warm enough, we offer the option to heat the pool further to help cover the additional natural gas cost.{" "}
-            <Link to="/" className="text-primary underline underline-offset-2">
+            <Link to={`/?home=${slug}`} className="text-primary underline underline-offset-2">
               Add pool heating
             </Link>
           </p>
