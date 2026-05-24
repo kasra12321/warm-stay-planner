@@ -237,7 +237,6 @@ serve(async (req) => {
           }).format(new Date()),
           10,
         );
-        const orderStillActiveToday = pacificHour < 17;
         const { data: activeDate } = await supabase
           .from("order_dates")
           .select("temperature, orders!inner(home_id, status)")
@@ -247,6 +246,23 @@ serve(async (req) => {
           .order("temperature", { ascending: false })
           .limit(1)
           .maybeSingle();
+        // Multi-day stays: if there's a future booked date for this home in any
+        // active order, the stay is still in progress and the 5pm cutoff does
+        // NOT apply today. Only treat the order as ended after 5pm Pacific on
+        // the FINAL booked day.
+        let isLastDay = true;
+        if (activeDate) {
+          const { data: futureDate } = await supabase
+            .from("order_dates")
+            .select("date, orders!inner(home_id, status)")
+            .eq("orders.home_id", home.id)
+            .gt("date", todayPacific)
+            .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
+            .limit(1)
+            .maybeSingle();
+          isLastDay = !futureDate;
+        }
+        const orderStillActiveToday = !isLastDay || pacificHour < 17;
         const hasActiveOrder = !!(activeDate && orderStillActiveToday);
 
         // If state already reflects guest_heat AND an active order exists,
