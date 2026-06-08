@@ -288,6 +288,7 @@ serve(async (req) => {
 
     if (action === "set-temp") {
       const { home_id, temp } = body;
+      const bodyKind: "pool" | "spa" = body.body === "spa" ? "spa" : "pool";
       if (!home_id || typeof temp !== "number") {
         return new Response(JSON.stringify({ error: "home_id and temp required" }), {
           status: 400,
@@ -301,7 +302,11 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const tempIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      // home.iaqualink_temp_sensor_index points at the POOL setpoint index.
+      // On dual-body controllers the spa lives on the opposite index.
+      const poolIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      const spaIndex = (poolIndex === 2 ? 1 : 2) as 1 | 2;
+      const tempIndex = bodyKind === "spa" ? spaIndex : poolIndex;
       const res = await withRelogin(supabase, (sid) => iaquaSetPoolTemp(home.iaqualink_serial, sid, temp, tempIndex));
       if (res.status >= 400) {
         return new Response(JSON.stringify({ error: `set_temps ${res.status}: ${JSON.stringify(res.body)}` }), {
@@ -327,8 +332,9 @@ serve(async (req) => {
           // We verify against the field that matches the index we actually wrote to,
           // so a misconfigured index surfaces as "not verified" instead of silently
           // landing on the wrong setpoint.
-          const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
-          const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
+          // Field the panel reports for the body we just wrote to.
+          const primaryField = bodyKind === "spa" ? "spa_set_point" : "pool_set_point";
+          const fallbackField = bodyKind === "spa" ? "pool_set_point" : "spa_set_point";
           const primaryVal = parseInt(flat[primaryField], 10);
           const fallbackVal = parseInt(flat[fallbackField], 10);
           // Pool-only controllers report only pool_set_point even when index=1, so

@@ -225,9 +225,7 @@ serve(async (req) => {
       }
       temp = Math.max(spaMin, Math.min(spaMax, temp));
       const fnName = home.controller_type === "screenlogic" ? "screenlogic-control" : "iaqualink-control";
-      const payload: any = { action: "set-temp", home_id: home.id, temp };
-      if (home.controller_type === "screenlogic") payload.body = "spa";
-      else payload.tempIndex = 2; // honored only if controller has dual setpoints; iaqualink-control uses home's configured index
+      const payload: any = { action: "set-temp", home_id: home.id, temp, body: "spa" };
       const r = await fetch(`${supabaseUrl}/functions/v1/${fnName}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${serviceKey}` },
