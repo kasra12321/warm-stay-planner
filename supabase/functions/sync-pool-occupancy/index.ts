@@ -303,6 +303,7 @@ serve(async (req) => {
           // and compare to what we think it is. Re-applies + alerts if drifted.
           let driftActual: number | null = null;
           let controllerOffline = false;
+          let waterTemp: number | null = null;
           try {
             const verify = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
               method: "POST",
@@ -314,16 +315,22 @@ serve(async (req) => {
               if (vJson.status["status"] === "Offline" || vJson.status["response"] === "Error") {
                 controllerOffline = true;
               }
-              // Smart-match: if ANY setpoint field equals our target, we're in sync.
-              // Otherwise report the first valid reading as the actual.
-              const setpoints = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]]
-                .map((c) => parseInt(c, 10))
-                .filter((n) => !isNaN(n) && n >= 50 && n <= 110);
-              if (setpoints.includes(decision.temp)) {
-                driftActual = decision.temp;
-              } else if (setpoints.length > 0) {
-                driftActual = setpoints[0];
+              // Use the CANONICAL setpoint for this home's pool body, not a mix
+              // of pool+spa fields. iAquaLink returns `active_set_point` which
+              // already accounts for the configured sensor index. ScreenLogic
+              // returns the body setpoint as `pool_set_point`.
+              const canonicalRaw =
+                typeof vJson.active_set_point === "number"
+                  ? vJson.active_set_point
+                  : vJson.status["pool_set_point"];
+              const canonical = parseInt(String(canonicalRaw), 10);
+              if (!isNaN(canonical) && canonical >= 50 && canonical <= 110) {
+                driftActual = canonical;
               }
+              // Capture water temp for clearer drift messages (distinguishes
+              // setpoint vs. actual pool water temperature in the alert).
+              const wt = parseInt(String(vJson.status["pool_temp"] ?? ""), 10);
+              if (!isNaN(wt) && wt >= 30 && wt <= 120) waterTemp = wt;
             }
           } catch (e) {
             console.error("drift check failed", e);
@@ -354,6 +361,7 @@ serve(async (req) => {
             });
             const rJson = await reapply.json();
             const newActual = typeof rJson.actual_temp === "number" ? rJson.actual_temp : driftActual;
+            const waterSuffix = waterTemp !== null ? `, water ${waterTemp}°F` : "";
             await supabase.from("home_pool_state").upsert({
               home_id: home.id,
               current_mode: decision.mode,
@@ -363,15 +371,15 @@ serve(async (req) => {
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
               eco_paused_until: nextEcoPausedUntil,
               notes: rJson.verified
-                ? `${decision.reason} (drift corrected from ${driftActual}°F)`
-                : `${decision.reason} ⚠️ drift ${driftActual}°F, reapply unverified`,
+                ? `${decision.reason} (drift corrected: setpoint was ${driftActual}°F${waterSuffix})`
+                : `${decision.reason} ⚠️ drift setpoint ${driftActual}°F${waterSuffix}, reapply unverified`,
             }, { onConflict: "home_id" });
             changes.push({
               home: homeName,
-              from: `drift ${driftActual}°F`,
+              from: `drift setpoint ${driftActual}°F${waterSuffix}`,
               to: decision.mode,
               temp: newActual,
-              reason: `drift corrected (was ${driftActual}, target ${decision.temp})`,
+              reason: `drift corrected (setpoint was ${driftActual}°F, target ${decision.temp}°F${waterSuffix})`,
             });
           } else {
             await supabase.from("home_pool_state").upsert({
