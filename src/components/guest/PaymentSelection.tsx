@@ -78,7 +78,13 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         return;
       }
 
-      // Manual order is pending. Notifications fire only after "I've paid".
+      // Manual order is trusted as submitted. Fire admin notify + fanout
+      // (reminders, guest SMS, receipt) immediately so the order is fully
+      // active even if the guest closes the tab from the instructions
+      // screen.
+      supabase.functions
+        .invoke('notify-admin-order', { body: { orderId: order.id } })
+        .catch((e) => console.error('notify-admin-order failed:', e));
       setPendingManual({ orderId: order.id, method: paymentMethod });
     } catch (error) {
       console.error('Order creation failed:', error);
