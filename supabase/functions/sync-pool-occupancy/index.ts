@@ -242,7 +242,7 @@ serve(async (req) => {
           .select("temperature, orders!inner(home_id, status)")
           .eq("orders.home_id", home.id)
           .eq("date", todayPacific)
-          .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
+          .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted", "venmo_pending", "zelle_pending", "apple_cash_pending"])
           .order("temperature", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -257,7 +257,7 @@ serve(async (req) => {
             .select("date, orders!inner(home_id, status)")
             .eq("orders.home_id", home.id)
             .gt("date", todayPacific)
-            .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
+            .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted", "venmo_pending", "zelle_pending", "apple_cash_pending"])
             .limit(1)
             .maybeSingle();
           isLastDay = !futureDate;
