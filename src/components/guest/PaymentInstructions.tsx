@@ -18,12 +18,6 @@ interface Props {
   onBack: () => void;
 }
 
-const STATUS_MAP = {
-  venmo: 'venmo_submitted',
-  zelle: 'zelle_submitted',
-  apple_cash: 'apple_cash_submitted',
-} as const;
-
 export function PaymentInstructions({
   orderId, paymentMethod, home, guestInfo, selectedDates, total, onConfirmed, onBack,
 }: Props) {
@@ -55,29 +49,14 @@ export function PaymentInstructions({
   const handlePaid = async () => {
     setConfirming(true);
     try {
-      // Order was created in *_pending. Flip to *_submitted now and fire
-      // admin notify, reminders, guest SMS, and guest receipt.
-      const newStatus = STATUS_MAP[paymentMethod];
-      const { error: updErr } = await supabase
-        .from('orders')
-        .update({ status: newStatus as any })
-        .eq('id', orderId);
-      if (updErr) throw updErr;
-
-      // Await the orchestrator so all server-side fanout (reminders, SMS,
-      // receipt, admin email) completes before we navigate away. Previously
-      // these were fire-and-forget from the browser, so closing the tab
-      // could cancel them and leave the order without reminders.
-      const { error: notifyErr } = await supabase.functions.invoke(
-        'notify-admin-order',
-        { body: { orderId } },
-      );
-      if (notifyErr) {
-        // Non-fatal for the guest — order is already marked submitted —
-        // but log so we can investigate.
-        console.error('notify-admin-order failed:', notifyErr);
-      }
-
+      // Order was already marked *_submitted and the orchestrator was
+      // invoked at creation time. This button just advances the guest to
+      // the confirmation screen.
+      const newStatus = (
+        paymentMethod === 'venmo' ? 'venmo_submitted'
+        : paymentMethod === 'zelle' ? 'zelle_submitted'
+        : 'apple_cash_submitted'
+      ) as const;
       const summary: OrderSummary = {
         id: orderId,
         home,
