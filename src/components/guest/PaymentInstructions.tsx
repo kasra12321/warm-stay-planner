@@ -52,11 +52,10 @@ export function PaymentInstructions({
       // Order was already marked *_submitted and the orchestrator was
       // invoked at creation time. This button just advances the guest to
       // the confirmation screen.
-      const newStatus = (
+      const newStatus: 'venmo_submitted' | 'zelle_submitted' | 'apple_cash_submitted' =
         paymentMethod === 'venmo' ? 'venmo_submitted'
         : paymentMethod === 'zelle' ? 'zelle_submitted'
-        : 'apple_cash_submitted'
-      ) as const;
+        : 'apple_cash_submitted';
       const summary: OrderSummary = {
         id: orderId,
         home,
