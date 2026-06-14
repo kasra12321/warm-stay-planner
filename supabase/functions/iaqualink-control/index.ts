@@ -416,6 +416,19 @@ serve(async (req) => {
       // the admin UI shows the setpoint that actually corresponds to this
       // home's pool sensor (e.g. Athens uses temp1 -> spa_set_point).
       if (activeSetPoint != null) flat.pool_set_point = String(activeSetPoint);
+      // Same normalization for the *current* temperature reading. iAquaLink
+      // reports both pool_temp and spa_temp; for homes whose active sensor is
+      // temp1 (e.g. Athens), the meaningful water temp is spa_temp. Override
+      // pool_temp so downstream pollers and drift checks read the correct
+      // sensor and ignore the unused one.
+      const primaryTempField = tempIndex === 2 ? "pool_temp" : "spa_temp";
+      const fallbackTempField = tempIndex === 2 ? "spa_temp" : "pool_temp";
+      const primaryTempVal = parseInt(flat[primaryTempField], 10);
+      const fallbackTempVal = parseInt(flat[fallbackTempField], 10);
+      let activeTemp: number | null = null;
+      if (!isNaN(primaryTempVal)) activeTemp = primaryTempVal;
+      else if (!isNaN(fallbackTempVal)) activeTemp = fallbackTempVal;
+      if (activeTemp != null) flat.pool_temp = String(activeTemp);
       return new Response(JSON.stringify({ success: true, status: flat, raw: res.body, active_set_point: activeSetPoint, temp_index: tempIndex }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
