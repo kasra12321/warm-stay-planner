@@ -332,9 +332,13 @@ serve(async (req) => {
           // We verify against the field that matches the index we actually wrote to,
           // so a misconfigured index surfaces as "not verified" instead of silently
           // landing on the wrong setpoint.
-          // Field the panel reports for the body we just wrote to.
-          const primaryField = bodyKind === "spa" ? "spa_set_point" : "pool_set_point";
-          const fallbackField = bodyKind === "spa" ? "pool_set_point" : "spa_set_point";
+          // Field the panel reports for the index we just wrote to. This must
+          // mirror get-status: index 1 -> spa_set_point (on dual controllers)
+          // or pool_set_point (pool-only); index 2 -> pool_set_point. Using
+          // bodyKind here is wrong for homes whose pool sits on temp1 (e.g.
+          // Athens), where pool_set_point reflects the UNUSED temp2 sensor.
+          const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
+          const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
           const primaryVal = parseInt(flat[primaryField], 10);
           const fallbackVal = parseInt(flat[fallbackField], 10);
           // Pool-only controllers report only pool_set_point even when index=1, so
