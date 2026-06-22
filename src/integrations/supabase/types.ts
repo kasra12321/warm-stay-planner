@@ -462,6 +462,12 @@ export type Database = {
           allow_spa_temp_during_quiet: boolean
           apple_cash_instructions: string | null
           apple_cash_phone: string | null
+          auto_spa_shutoff_enabled: boolean
+          auto_spa_shutoff_end_hour: number
+          auto_spa_shutoff_home_ids: string[]
+          auto_spa_shutoff_interval_minutes: number
+          auto_spa_shutoff_last_run_at: string | null
+          auto_spa_shutoff_start_hour: number
           created_at: string
           id: string
           quiet_end_hour: number
@@ -481,6 +487,12 @@ export type Database = {
           allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
+          auto_spa_shutoff_enabled?: boolean
+          auto_spa_shutoff_end_hour?: number
+          auto_spa_shutoff_home_ids?: string[]
+          auto_spa_shutoff_interval_minutes?: number
+          auto_spa_shutoff_last_run_at?: string | null
+          auto_spa_shutoff_start_hour?: number
           created_at?: string
           id?: string
           quiet_end_hour?: number
@@ -500,6 +512,12 @@ export type Database = {
           allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
+          auto_spa_shutoff_enabled?: boolean
+          auto_spa_shutoff_end_hour?: number
+          auto_spa_shutoff_home_ids?: string[]
+          auto_spa_shutoff_interval_minutes?: number
+          auto_spa_shutoff_last_run_at?: string | null
+          auto_spa_shutoff_start_hour?: number
           created_at?: string
           id?: string
           quiet_end_hour?: number
