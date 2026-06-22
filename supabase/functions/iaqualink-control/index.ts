@@ -431,8 +431,15 @@ serve(async (req) => {
       const fallbackTempVal = parseInt(flat[fallbackTempField], 10);
       let activeTemp: number | null = null;
       if (!isNaN(primaryTempVal)) activeTemp = primaryTempVal;
-      else if (!isNaN(fallbackTempVal)) activeTemp = fallbackTempVal;
-      if (activeTemp != null) flat.pool_temp = String(activeTemp);
+      // Only fall back across bodies on single-body (pool-only) controllers.
+      // On dual pool/spa panels, an empty primary field means that body's
+      // sensor isn't reading right now (e.g. spa mode is on, pool loop
+      // isn't circulating) — using the other body's temp would mislabel
+      // the spa reading as the pool temp.
+      else if (!home.has_spa && !isNaN(fallbackTempVal)) activeTemp = fallbackTempVal;
+      // Always write the resolved value (or empty string) so downstream
+      // consumers don't pick up the other body's temp from the raw payload.
+      flat.pool_temp = activeTemp != null ? String(activeTemp) : "";
       return new Response(JSON.stringify({ success: true, status: flat, raw: res.body, active_set_point: activeSetPoint, temp_index: tempIndex }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
