@@ -161,7 +161,9 @@ const PoolControl = () => {
     <div className="min-h-screen bg-background pb-12">
       <header className="px-4 pt-6 pb-4 text-center border-b">
         <h1 className="text-2xl font-bold text-foreground">{home.name}</h1>
-        <p className="text-sm text-muted-foreground mt-1">Pool &amp; spa controls · {todayLabel()}</p>
+        <p className="text-sm text-muted-foreground mt-1">
+          {home.has_spa ? 'Pool & spa controls' : 'Pool controls'} · {todayLabel()}
+        </p>
       </header>
 
       <main className="max-w-md mx-auto px-4 py-4 space-y-4">
@@ -186,7 +188,7 @@ const PoolControl = () => {
           <Card>
             <CardContent className="p-4">
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                <Thermometer className="w-3.5 h-3.5" /> Pool
+                <Thermometer className="w-3.5 h-3.5" /> Current Pool Temperature
               </div>
               {showPoolTemp && pool_temp != null ? (
                 <p className="text-3xl font-bold mt-1">
@@ -217,15 +219,23 @@ const PoolControl = () => {
           )}
         </div>
 
-        <div className="flex items-start gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
-          <Thermometer className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
-          <p className="text-muted-foreground">
-            If 81°F isn't warm enough, we offer the option to heat the pool further to help cover the additional natural gas cost.{" "}
-            <Link to={`/?home=${slug}`} className="text-primary underline underline-offset-2">
-              Add pool heating
-            </Link>
-          </p>
-        </div>
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Thermometer className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Want it warmer?</h2>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              The pool is heated automatically to about <span className="font-medium text-foreground">81°F</span>. It naturally cools in the evenings and warms back up quickly in the mornings — it won't feel hot like a jacuzzi, but it's comfortable for swimming.
+            </p>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              If you'd like it warmer, you can cover the additional gas cost and we'll heat it further. It's totally optional — most guests don't, but the option is there if you want it.
+            </p>
+            <Button asChild size="lg" className="w-full h-12 text-base font-semibold">
+              <Link to={`/?home=${slug}`}>Add Pool Heating</Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         {home.has_spa && (
           <Card>
