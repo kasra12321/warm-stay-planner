@@ -78,4 +78,9 @@ export interface Settings {
   admin_email: string;
   admin_calendar_email: string;
   twilio_from_number: string;
+  forecast_zip?: string | null;
+  booking_window_days?: number;
+  forecast_last_fetched_at?: string | null;
+  forecast_lat?: number | null;
+  forecast_lon?: number | null;
 }
