@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      daily_forecast: {
+        Row: {
+          date: string
+          fetched_at: string
+          high_temp_f: number
+          zip: string | null
+        }
+        Insert: {
+          date: string
+          fetched_at?: string
+          high_temp_f: number
+          zip?: string | null
+        }
+        Update: {
+          date?: string
+          fetched_at?: string
+          high_temp_f?: number
+          zip?: string | null
+        }
+        Relationships: []
+      }
       heating_options: {
         Row: {
           active: boolean
@@ -373,6 +394,89 @@ export type Database = {
         }
         Relationships: []
       }
+      pricing_band_options: {
+        Row: {
+          band_id: string
+          created_at: string
+          id: string
+          price_per_day: number
+          temperature: number
+        }
+        Insert: {
+          band_id: string
+          created_at?: string
+          id?: string
+          price_per_day: number
+          temperature: number
+        }
+        Update: {
+          band_id?: string
+          created_at?: string
+          id?: string
+          price_per_day?: number
+          temperature?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_band_options_band_id_fkey"
+            columns: ["band_id"]
+            isOneToOne: false
+            referencedRelation: "pricing_bands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pricing_bands: {
+        Row: {
+          created_at: string
+          id: string
+          label: string | null
+          outdoor_high_f: number
+          outdoor_low_f: number
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          outdoor_high_f: number
+          outdoor_low_f: number
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          outdoor_high_f?: number
+          outdoor_low_f?: number
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      pricing_fallback_options: {
+        Row: {
+          created_at: string
+          id: string
+          price_per_day: number
+          temperature: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          price_per_day: number
+          temperature: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          price_per_day?: number
+          temperature?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -468,7 +572,12 @@ export type Database = {
           auto_spa_shutoff_interval_minutes: number
           auto_spa_shutoff_last_run_at: string | null
           auto_spa_shutoff_start_hour: number
+          booking_window_days: number
           created_at: string
+          forecast_last_fetched_at: string | null
+          forecast_lat: number | null
+          forecast_lon: number | null
+          forecast_zip: string | null
           id: string
           quiet_end_hour: number
           quiet_start_hour: number
@@ -493,7 +602,12 @@ export type Database = {
           auto_spa_shutoff_interval_minutes?: number
           auto_spa_shutoff_last_run_at?: string | null
           auto_spa_shutoff_start_hour?: number
+          booking_window_days?: number
           created_at?: string
+          forecast_last_fetched_at?: string | null
+          forecast_lat?: number | null
+          forecast_lon?: number | null
+          forecast_zip?: string | null
           id?: string
           quiet_end_hour?: number
           quiet_start_hour?: number
@@ -518,7 +632,12 @@ export type Database = {
           auto_spa_shutoff_interval_minutes?: number
           auto_spa_shutoff_last_run_at?: string | null
           auto_spa_shutoff_start_hour?: number
+          booking_window_days?: number
           created_at?: string
+          forecast_last_fetched_at?: string | null
+          forecast_lat?: number | null
+          forecast_lon?: number | null
+          forecast_zip?: string | null
           id?: string
           quiet_end_hour?: number
           quiet_start_hour?: number
