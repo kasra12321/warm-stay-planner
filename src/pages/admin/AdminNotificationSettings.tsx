@@ -19,6 +19,19 @@ const AdminNotificationSettings = () => {
     },
   });
 
+  const { data: homes } = useQuery({
+    queryKey: ['admin-settings-homes'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('homes')
+        .select('id, name, has_spa, active')
+        .eq('active', true)
+        .order('name');
+      if (error) throw error;
+      return data;
+    },
+  });
+
   const [email, setEmail] = useState('');
   const [calendarEmail, setCalendarEmail] = useState('');
   const [spaMin, setSpaMin] = useState('95');
@@ -26,6 +39,11 @@ const AdminNotificationSettings = () => {
   const [quietStart, setQuietStart] = useState('22');
   const [quietEnd, setQuietEnd] = useState('8');
   const [allowSpaTempDuringQuiet, setAllowSpaTempDuringQuiet] = useState(true);
+  const [autoShutoffEnabled, setAutoShutoffEnabled] = useState(false);
+  const [autoShutoffHomeIds, setAutoShutoffHomeIds] = useState<string[]>([]);
+  const [autoShutoffStart, setAutoShutoffStart] = useState('22');
+  const [autoShutoffEnd, setAutoShutoffEnd] = useState('8');
+  const [autoShutoffInterval, setAutoShutoffInterval] = useState('30');
 
   useEffect(() => {
     if (settings) {
@@ -36,6 +54,11 @@ const AdminNotificationSettings = () => {
       setQuietStart(String((settings as any).quiet_start_hour ?? 22));
       setQuietEnd(String((settings as any).quiet_end_hour ?? 8));
       setAllowSpaTempDuringQuiet((settings as any).allow_spa_temp_during_quiet ?? true);
+      setAutoShutoffEnabled((settings as any).auto_spa_shutoff_enabled ?? false);
+      setAutoShutoffHomeIds((settings as any).auto_spa_shutoff_home_ids ?? []);
+      setAutoShutoffStart(String((settings as any).auto_spa_shutoff_start_hour ?? 22));
+      setAutoShutoffEnd(String((settings as any).auto_spa_shutoff_end_hour ?? 8));
+      setAutoShutoffInterval(String((settings as any).auto_spa_shutoff_interval_minutes ?? 30));
     }
   }, [settings]);
 
@@ -50,6 +73,11 @@ const AdminNotificationSettings = () => {
         quiet_start_hour: Number(quietStart),
         quiet_end_hour: Number(quietEnd),
         allow_spa_temp_during_quiet: allowSpaTempDuringQuiet,
+        auto_spa_shutoff_enabled: autoShutoffEnabled,
+        auto_spa_shutoff_home_ids: autoShutoffHomeIds,
+        auto_spa_shutoff_start_hour: Number(autoShutoffStart),
+        auto_spa_shutoff_end_hour: Number(autoShutoffEnd),
+        auto_spa_shutoff_interval_minutes: Number(autoShutoffInterval),
       } as any).eq('id', settings.id);
       if (error) throw error;
     },
@@ -58,6 +86,12 @@ const AdminNotificationSettings = () => {
       toast.success('Settings saved');
     },
   });
+
+  const toggleHome = (id: string) => {
+    setAutoShutoffHomeIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -116,6 +150,96 @@ const AdminNotificationSettings = () => {
               <p className="text-xs text-muted-foreground">Spa target adjustments stay available even during quiet time.</p>
             </div>
             <Switch checked={allowSpaTempDuringQuiet} onCheckedChange={setAllowSpaTempDuringQuiet} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Auto spa shut-off</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label className="text-sm">Enable auto shut-off</Label>
+              <p className="text-xs text-muted-foreground">
+                During the window below, periodically check selected homes and turn off the spa heater and any active features.
+              </p>
+            </div>
+            <Switch checked={autoShutoffEnabled} onCheckedChange={setAutoShutoffEnabled} />
+          </div>
+
+          <div>
+            <Label className="text-sm">Window (Pacific time, 24h)</Label>
+            <div className="grid grid-cols-2 gap-3 mt-1">
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Start hour (0–23)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={autoShutoffStart}
+                  onChange={(e) => setAutoShutoffStart(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">End hour (0–23)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={autoShutoffEnd}
+                  onChange={(e) => setAutoShutoffEnd(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-sm">Check interval (minutes)</Label>
+            <Input
+              type="number"
+              min="1"
+              value={autoShutoffInterval}
+              onChange={(e) => setAutoShutoffInterval(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How often, in minutes, to re-check during the window and shut things off again if they're back on.
+            </p>
+          </div>
+
+          <div>
+            <Label className="text-sm">Apply to homes</Label>
+            <p className="text-xs text-muted-foreground mb-2">
+              Only the homes you check will have their spa and features turned off.
+            </p>
+            <div className="space-y-2 rounded-md border p-3">
+              {(homes ?? []).map((h) => {
+                const checked = autoShutoffHomeIds.includes(h.id);
+                return (
+                  <label
+                    key={h.id}
+                    className="flex items-center justify-between gap-3 text-sm cursor-pointer"
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={checked}
+                        onChange={() => toggleHome(h.id)}
+                      />
+                      <span>{h.name}</span>
+                      {!h.has_spa && (
+                        <span className="text-xs text-muted-foreground">(no spa — features only)</span>
+                      )}
+                    </span>
+                  </label>
+                );
+              })}
+              {(homes ?? []).length === 0 && (
+                <p className="text-xs text-muted-foreground">No active homes.</p>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
