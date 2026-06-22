@@ -174,6 +174,12 @@ serve(async (req) => {
       };
       const poolActive = bodyActive("pool");
       const spaActive = bodyActive("spa");
+      // If the controller responded but the pool sensor is empty, the pool
+      // body isn't actively circulating (e.g. spa mode is on). Force the
+      // active flag off so the UI hides any stale cached temp instead of
+      // showing the spa reading as the pool temp.
+      const livePoolTempPresent = parseN(liveStatus.pool_temp) != null;
+      const poolActiveFinal = live && !livePoolTempPresent ? false : poolActive;
 
       return new Response(JSON.stringify({
         home: {
@@ -187,7 +193,7 @@ serve(async (req) => {
         },
         pool_temp: poolTemp,
         spa_temp: spaTemp,
-        pool_active: poolActive,
+        pool_active: poolActiveFinal,
         spa_active: spaActive,
         pool_setpoint: poolSetpoint,
         spa_setpoint: spaSetpoint,
