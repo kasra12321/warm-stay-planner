@@ -14,16 +14,16 @@ export function useCheckout() {
   const selectHome = useCallback((home: Home, locked = false) => {
     setSelectedHome(home);
     setHomeLocked(locked);
-    setStep('guest');
+    setStep('dates');
   }, []);
 
   const submitGuestInfo = useCallback((info: GuestInfo) => {
     setGuestInfo(info);
-    setStep('dates');
+    setStep('payment');
   }, []);
 
   const goToPayment = useCallback(() => {
-    if (selectedDates.length > 0) setStep('payment');
+    if (selectedDates.length > 0) setStep('guest');
   }, [selectedDates]);
 
   const toggleDate = useCallback((dateStr: string, temperature: number, price: number) => {
@@ -44,10 +44,10 @@ export function useCheckout() {
   }, []);
 
   const goBack = useCallback(() => {
-    const steps: CheckoutStep[] = ['home', 'guest', 'dates', 'payment'];
+    const steps: CheckoutStep[] = ['home', 'dates', 'guest', 'payment'];
     const idx = steps.indexOf(step);
     if (idx > 0) {
-      if (step === 'guest' && homeLocked) return; // can't go back past locked home
+      if (step === 'dates' && homeLocked) return; // can't go back past locked home
       setStep(steps[idx - 1]);
     }
   }, [step, homeLocked]);

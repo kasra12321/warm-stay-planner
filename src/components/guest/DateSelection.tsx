@@ -180,8 +180,6 @@ export function DateSelection({
                 <span>{day}</span>
                 {selected ? (
                   <span className="text-[10px] leading-none font-normal">{selected.temperature}°</span>
-                ) : pricing && pricing.high !== null ? (
-                  <span className="text-[9px] leading-none text-muted-foreground">{pricing.high}°</span>
                 ) : null}
               </button>
             );
@@ -214,7 +212,7 @@ export function DateSelection({
             <span>${total.toFixed(2)}</span>
           </div>
           <Button onClick={onContinue} className="w-full h-12 text-base font-semibold">
-            Continue to Payment
+            Continue
           </Button>
         </div>
       )}
