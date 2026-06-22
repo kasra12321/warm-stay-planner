@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useHeatingOptions, useBlockedDates } from '@/hooks/useData';
-import type { SelectedDate, HeatingOption } from '@/lib/types';
+import { useBlockedDates, usePricingBands, useFallbackOptions, useDailyForecast, useSettings } from '@/hooks/useData';
+import type { SelectedDate } from '@/lib/types';
+import { getOptionsForDate, addDaysPacific } from '@/lib/pricing';
 import { isSameDayWarning, isSameDayCutoff, formatDateDisplay, getTodayPacific } from '@/lib/pacific-time';
 import { ArrowLeft } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
@@ -22,16 +23,22 @@ interface Props {
 export function DateSelection({
   homeId, homeName, selectedDates, onToggleDate, onRemoveDate, onContinue, onBack, total,
 }: Props) {
-  const { data: options } = useHeatingOptions();
   const { data: blockedDates } = useBlockedDates(homeId);
+  const { data: bands } = usePricingBands();
+  const { data: fallback } = useFallbackOptions();
+  const { data: forecast } = useDailyForecast();
+  const { data: settings } = useSettings();
+  const windowDays = settings?.booking_window_days || 14;
+
+  const todayStr = getTodayPacific();
+  const lastBookableStr = addDaysPacific(todayStr, windowDays - 1);
+
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
   });
   const [drawerDate, setDrawerDate] = useState<string | null>(null);
   const [sameDayWarningShown, setSameDayWarningShown] = useState(false);
-
-  const todayStr = getTodayPacific();
 
   const blockedSet = useMemo(() => new Set(blockedDates || []), [blockedDates]);
   const selectedMap = useMemo(() => {
@@ -48,24 +55,35 @@ export function DateSelection({
     year: 'numeric',
   });
 
+  const todayYear = Number(todayStr.slice(0, 4));
+  const todayMonthIdx = Number(todayStr.slice(5, 7)) - 1;
+  const lastYear = Number(lastBookableStr.slice(0, 4));
+  const lastMonthIdx = Number(lastBookableStr.slice(5, 7)) - 1;
+  const canPrev = currentMonth.year > todayYear || (currentMonth.year === todayYear && currentMonth.month > todayMonthIdx);
+  const canNext = currentMonth.year < lastYear || (currentMonth.year === lastYear && currentMonth.month < lastMonthIdx);
+
   const prevMonth = () => {
+    if (!canPrev) return;
     setCurrentMonth(p => p.month === 0 ? { year: p.year - 1, month: 11 } : { ...p, month: p.month - 1 });
   };
   const nextMonth = () => {
+    if (!canNext) return;
     setCurrentMonth(p => p.month === 11 ? { year: p.year + 1, month: 0 } : { ...p, month: p.month + 1 });
   };
+
+  const dayPricing = (dateStr: string) => getOptionsForDate(dateStr, forecast, bands, fallback);
 
   const handleDayClick = (dateStr: string) => {
     if (blockedSet.has(dateStr)) return;
     if (dateStr < todayStr) return;
+    if (dateStr > lastBookableStr) return;
     if (isSameDayCutoff(dateStr)) return;
+    if (dayPricing(dateStr).options.length === 0) return;
 
     const existing = selectedMap.get(dateStr);
     if (existing) {
-      // Open drawer to edit
       setDrawerDate(dateStr);
     } else {
-      // Show same-day warning if needed
       if (isSameDayWarning(dateStr) && !sameDayWarningShown) {
         setSameDayWarningShown(true);
       }
@@ -73,9 +91,9 @@ export function DateSelection({
     }
   };
 
-  const handleSelectTemp = (opt: HeatingOption) => {
+  const handleSelectTemp = (opt: { temperature: number; price: number }) => {
     if (drawerDate) {
-      onToggleDate(drawerDate, opt.temperature, opt.price_per_day);
+      onToggleDate(drawerDate, opt.temperature, opt.price);
       setDrawerDate(null);
     }
   };
@@ -86,6 +104,8 @@ export function DateSelection({
       setDrawerDate(null);
     }
   };
+
+  const drawerPricing = drawerDate ? dayPricing(drawerDate) : null;
 
   return (
     <div className="space-y-4">
@@ -99,7 +119,10 @@ export function DateSelection({
         <p className="text-muted-foreground">Pick the day(s) you want the pool heated at <span className="font-medium text-foreground">{homeName}</span></p>
       </div>
 
-      {/* Same-day warning */}
+      <div className="bg-muted/50 border border-border rounded-lg p-3 text-xs text-muted-foreground leading-relaxed">
+        Our goal is for you to just cover the gas cost of heating the pool. Prices change with the forecast high temperature each day so you pay close to what it actually costs to warm the water. Bookings are open for the next {windowDays} days.
+      </div>
+
       {sameDayWarningShown && (
         <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3">
           <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
@@ -109,14 +132,13 @@ export function DateSelection({
         </div>
       )}
 
-      {/* Calendar */}
       <div className="bg-card rounded-xl border p-4">
         <div className="flex items-center justify-between mb-4">
-          <button onClick={prevMonth} className="p-2 hover:bg-muted rounded-lg transition-colors">
+          <button onClick={prevMonth} disabled={!canPrev} className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
             <ChevronLeft className="w-5 h-5" />
           </button>
           <span className="font-semibold text-foreground">{monthLabel}</span>
-          <button onClick={nextMonth} className="p-2 hover:bg-muted rounded-lg transition-colors">
+          <button onClick={nextMonth} disabled={!canNext} className="p-2 hover:bg-muted rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
@@ -135,10 +157,13 @@ export function DateSelection({
             const day = i + 1;
             const dateStr = `${currentMonth.year}-${String(currentMonth.month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
             const isPast = dateStr < todayStr;
+            const isAfterWindow = dateStr > lastBookableStr;
             const isBlocked = blockedSet.has(dateStr);
             const isCutoff = isSameDayCutoff(dateStr);
             const selected = selectedMap.get(dateStr);
-            const isDisabled = isPast || isBlocked || isCutoff;
+            const pricing = !isPast && !isAfterWindow ? dayPricing(dateStr) : null;
+            const noPricing = pricing !== null && pricing.options.length === 0;
+            const isDisabled = isPast || isAfterWindow || isBlocked || isCutoff || noPricing;
 
             return (
               <button
@@ -153,16 +178,17 @@ export function DateSelection({
                 `}
               >
                 <span>{day}</span>
-                {selected && (
+                {selected ? (
                   <span className="text-[10px] leading-none font-normal">{selected.temperature}°</span>
-                )}
+                ) : pricing && pricing.high !== null ? (
+                  <span className="text-[9px] leading-none text-muted-foreground">{pricing.high}°</span>
+                ) : null}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Selected dates summary */}
       {selectedDates.length > 0 && (
         <div className="bg-card rounded-xl border p-4 space-y-3">
           <h3 className="font-semibold text-foreground">Order Summary</h3>
@@ -193,7 +219,6 @@ export function DateSelection({
         </div>
       )}
 
-      {/* Temperature selection drawer */}
       <Drawer open={!!drawerDate} onOpenChange={open => !open && setDrawerDate(null)}>
         <DrawerContent>
           <DrawerHeader>
@@ -202,6 +227,12 @@ export function DateSelection({
             </DrawerTitle>
           </DrawerHeader>
           <div className="p-4 pb-8 space-y-3">
+            {drawerPricing && drawerPricing.high !== null && (
+              <p className="text-xs text-muted-foreground">
+                Forecast high: <span className="font-medium text-foreground">{drawerPricing.high}°F</span>
+                {drawerPricing.source === 'fallback' && ' · standard pricing'}
+              </p>
+            )}
             {drawerDate && isSameDayWarning(drawerDate) && (
               <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3 mb-2">
                 <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
@@ -210,11 +241,11 @@ export function DateSelection({
                 </p>
               </div>
             )}
-            {options?.map(opt => {
+            {drawerPricing?.options.map(opt => {
               const isSelected = drawerDate && selectedMap.get(drawerDate)?.temperature === opt.temperature;
               return (
                 <button
-                  key={opt.id}
+                  key={opt.temperature}
                   onClick={() => handleSelectTemp(opt)}
                   className={`w-full p-4 rounded-xl border-2 text-left transition-all active:scale-[0.98] ${
                     isSelected
@@ -226,7 +257,7 @@ export function DateSelection({
                     <div>
                       <span className="text-xl font-bold text-foreground">{opt.temperature}°F</span>
                     </div>
-                    <span className="text-lg font-semibold text-foreground">${opt.price_per_day}/day</span>
+                    <span className="text-lg font-semibold text-foreground">${opt.price}/day</span>
                   </div>
                 </button>
               );
