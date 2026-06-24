@@ -292,6 +292,8 @@ const PoolControl = () => {
         {features.map((f) => {
           const cooldown = cooldowns[f.key] || 0;
           const Icon = getFeatureIcon(f.icon_key);
+          const isSlide = /slide/i.test(f.key) || /slide/i.test(f.label);
+          const slideBlockedBySpa = isSlide && spa_active === true;
           const subtitle = quiet_active
             ? "Paused for quiet hours"
             : cooldown > 0
@@ -301,19 +303,28 @@ const PoolControl = () => {
                 : "Tap to turn on";
           return (
             <Card key={f.key}>
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
-                  <Icon className="w-5 h-5 text-muted-foreground" />
+              <CardContent className="p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center shrink-0">
+                    <Icon className="w-5 h-5 text-muted-foreground" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium">{f.label}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {slideBlockedBySpa ? "Unavailable while spa is on" : subtitle}
+                    </p>
+                  </div>
+                  <Switch
+                    checked={f.on === true}
+                    disabled={quiet_active || cooldown > 0 || slideBlockedBySpa || toggleFeatureMutation.isPending}
+                    onCheckedChange={(v) => toggleFeatureMutation.mutate({ key: f.key, on: v })}
+                  />
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium">{f.label}</p>
-                  <p className="text-xs text-muted-foreground">{subtitle}</p>
-                </div>
-                <Switch
-                  checked={f.on === true}
-                  disabled={quiet_active || cooldown > 0 || toggleFeatureMutation.isPending}
-                  onCheckedChange={(v) => toggleFeatureMutation.mutate({ key: f.key, on: v })}
-                />
+                {slideBlockedBySpa && (
+                  <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-foreground leading-relaxed">
+                    The spa and the slide can't run at the same time. To use the slide, turn the spa off first so the system returns to pool mode.
+                  </div>
+                )}
               </CardContent>
             </Card>
           );
