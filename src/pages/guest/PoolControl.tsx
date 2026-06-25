@@ -230,9 +230,12 @@ const PoolControl = () => {
                   <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
                 </p>
               ) : poolOffBecauseSpa ? (
-                <p className="text-sm text-muted-foreground mt-2 leading-snug">
-                  Pool will only heat when the spa is off.
-                </p>
+                <div className="mt-2 leading-snug">
+                  <p className="text-sm font-medium text-foreground">No temperature available</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    (The pool will only heat when the spa is off.)
+                  </p>
+                </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-2">Pump off</p>
               )}
@@ -256,24 +259,6 @@ const PoolControl = () => {
             </Card>
           )}
         </div>
-
-        <Card className="border-primary/30 bg-primary/5">
-          <CardContent className="p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <Thermometer className="w-5 h-5 text-primary" />
-              <h2 className="text-lg font-semibold text-foreground">Want it warmer?</h2>
-            </div>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              The pool is heated automatically to about <span className="font-medium text-foreground">81°F</span>. It naturally cools in the evenings and warms back up quickly in the mornings — it won't feel hot like a jacuzzi, but it's comfortable for swimming.
-            </p>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              If you'd like it warmer, you can cover the additional gas cost and we'll heat it further. It's totally optional — most guests don't, but the option is there if you want it.
-            </p>
-            <Button asChild size="lg" className="w-full h-12 text-base font-semibold">
-              <Link to={`/?home=${slug}`}>Add Pool Heating</Link>
-            </Button>
-          </CardContent>
-        </Card>
 
         {home.has_spa && (
           <Card>
@@ -367,6 +352,24 @@ const PoolControl = () => {
             </Card>
           );
         })}
+
+        <Card className="border-primary/30 bg-primary/5">
+          <CardContent className="p-5 space-y-3">
+            <div className="flex items-center gap-2">
+              <Thermometer className="w-5 h-5 text-primary" />
+              <h2 className="text-lg font-semibold text-foreground">Want it warmer?</h2>
+            </div>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              The pool is heated automatically to about <span className="font-medium text-foreground">81°F</span>. It naturally cools in the evenings and warms back up quickly in the mornings — it won't feel hot like a jacuzzi, but it's comfortable for swimming.
+            </p>
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              If you'd like it warmer, you can cover the additional gas cost and we'll heat it further. It's totally optional — most guests don't, but the option is there if you want it.
+            </p>
+            <Button asChild size="lg" className="w-full h-12 text-base font-semibold">
+              <Link to={`/?home=${slug}`}>Add Pool Heating</Link>
+            </Button>
+          </CardContent>
+        </Card>
 
         {!home.controller_enabled && (
           <p className="text-xs text-center text-muted-foreground">
