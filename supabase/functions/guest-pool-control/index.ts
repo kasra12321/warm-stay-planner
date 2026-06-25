@@ -96,6 +96,18 @@ serve(async (req) => {
         .eq("home_id", home.id)
         .maybeSingle();
 
+      // Look up paid heating orders covering today or future dates for this home.
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+      const { data: heatedDates } = await supabase
+        .from("order_dates")
+        .select("date, temperature, orders!inner(home_id, status)")
+        .eq("orders.home_id", home.id)
+        .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
+        .gte("date", today)
+        .order("date");
+      const heatingDays = (heatedDates || []).map((r: any) => ({ date: r.date, temperature: r.temperature }));
+      const heatingToday = heatingDays.find((d) => d.date === today) || null;
+
       // List active mapped features
       const { data: features } = await supabase
         .from("home_features")
@@ -204,6 +216,8 @@ serve(async (req) => {
         allow_spa_temp_during_quiet: allowSpaTempDuringQuiet,
         last_checked_at: state?.last_temp_check_at ?? null,
         last_check_error: state?.last_temp_check_error ?? null,
+        heating_today: heatingToday,
+        heating_upcoming: heatingDays,
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 

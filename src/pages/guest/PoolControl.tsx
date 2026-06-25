@@ -5,7 +5,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { Thermometer, Plus, Minus, Loader2, MoonStar } from "lucide-react";
+import { Thermometer, Plus, Minus, Loader2, MoonStar, Flame } from "lucide-react";
 import { toast } from "sonner";
 import { getFeatureIcon } from "@/lib/feature-icons";
 
@@ -36,6 +36,8 @@ interface Status {
   quiet_active: boolean;
   quiet_end_label: string;
   allow_spa_temp_during_quiet: boolean;
+  heating_today: { date: string; temperature: number } | null;
+  heating_upcoming: { date: string; temperature: number }[];
 }
 
 function todayLabel(): string {
@@ -146,11 +148,21 @@ const PoolControl = () => {
     );
   }
 
-  const { home, pool_temp, spa_temp, pool_active, spa_active, quiet_active, quiet_end_label, features } = data;
+  const { home, pool_temp, spa_temp, pool_active, spa_active, quiet_active, quiet_end_label, features, heating_today, heating_upcoming } = data;
   const target = spaTarget ?? home.spa_min;
   // Hide the temp readout when we know the body isn't circulating.
   const showPoolTemp = pool_active !== false;
   const showSpaTemp = spa_active !== false;
+  const poolOffBecauseSpa = pool_active === false && spa_active === true;
+
+  const fmtDate = (iso: string) =>
+    new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
+      timeZone: "America/Los_Angeles",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+  const upcomingOnly = heating_upcoming.filter((d) => !heating_today || d.date !== heating_today.date);
 
   const adjustSpa = (delta: number) => {
     const next = Math.max(home.spa_min, Math.min(home.spa_max, target + delta));
@@ -184,6 +196,28 @@ const PoolControl = () => {
           </div>
         )}
 
+        {(heating_today || upcomingOnly.length > 0) && (
+          <div className="rounded-lg border border-primary/40 bg-primary/10 px-3 py-3 text-sm">
+            <div className="flex items-start gap-2">
+              <Flame className="w-4 h-4 mt-0.5 text-primary shrink-0" />
+              <div className="space-y-1">
+                {heating_today ? (
+                  <p className="text-foreground font-medium">
+                    Pool heating is active today — heating to {heating_today.temperature}°F.
+                  </p>
+                ) : (
+                  <p className="text-foreground font-medium">Pool heating order confirmed.</p>
+                )}
+                {upcomingOnly.length > 0 && (
+                  <p className="text-muted-foreground text-xs">
+                    Upcoming: {upcomingOnly.map((d) => `${fmtDate(d.date)} (${d.temperature}°F)`).join(", ")}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className={`grid gap-3 ${home.has_spa ? "grid-cols-2" : "grid-cols-1"}`}>
           <Card>
             <CardContent className="p-4">
@@ -195,6 +229,10 @@ const PoolControl = () => {
                   {pool_temp}
                   <span className="text-base font-medium text-muted-foreground ml-0.5">°F</span>
                 </p>
+              ) : poolOffBecauseSpa ? (
+                <p className="text-sm text-muted-foreground mt-2 leading-snug">
+                  Pool will only heat when the spa is off.
+                </p>
               ) : (
                 <p className="text-sm text-muted-foreground mt-2">Pump off</p>
               )}
@@ -204,7 +242,7 @@ const PoolControl = () => {
             <Card>
               <CardContent className="p-4">
                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground uppercase tracking-wide">
-                  <Thermometer className="w-3.5 h-3.5" /> Spa
+                  <Thermometer className="w-3.5 h-3.5" /> Current Spa Temperature
                 </div>
                 {showSpaTemp && spa_temp != null ? (
                   <p className="text-3xl font-bold mt-1">
