@@ -49,6 +49,17 @@ function todayLabel(): string {
   });
 }
 
+// Normalize common guest-visible feature-label typos. If the feature key
+// identifies the feature as a spa or slide, we correct truncated labels like
+// "Sa" to the full word so the guest UI always reads clearly.
+function normalizeFeatureLabel(f: FeatureRow): string {
+  const key = (f.key || "").toLowerCase();
+  const label = (f.label || "").trim();
+  if (key.includes("spa") && /^s[pa]?$/i.test(label)) return "Spa";
+  if (key.includes("slide") && /^s[li]?$/i.test(label)) return "Slide";
+  return label;
+}
+
 const PoolControl = () => {
   const { slug = "" } = useParams<{ slug: string }>();
   const qc = useQueryClient();
