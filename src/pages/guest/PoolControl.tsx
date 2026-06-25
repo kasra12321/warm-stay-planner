@@ -49,6 +49,17 @@ function todayLabel(): string {
   });
 }
 
+// Normalize common guest-visible feature-label typos. If the feature key
+// identifies the feature as a spa or slide, we correct truncated labels like
+// "Sa" to the full word so the guest UI always reads clearly.
+function normalizeFeatureLabel(f: FeatureRow): string {
+  const key = (f.key || "").toLowerCase();
+  const label = (f.label || "").trim();
+  if (key.includes("spa") && /^s[pa]?$/i.test(label)) return "Spa";
+  if (key.includes("slide") && /^s[li]?$/i.test(label)) return "Slide";
+  return label;
+}
+
 const PoolControl = () => {
   const { slug = "" } = useParams<{ slug: string }>();
   const qc = useQueryClient();
@@ -317,6 +328,8 @@ const PoolControl = () => {
           const Icon = getFeatureIcon(f.icon_key);
           const isSlide = /slide/i.test(f.key) || /slide/i.test(f.label);
           const slideBlockedBySpa = isSlide && spa_active === true;
+          // Normalize common misspellings/typos that can appear in guest-visible labels.
+          const label = normalizeFeatureLabel(f);
           const subtitle = quiet_active
             ? "Paused for quiet hours"
             : cooldown > 0
@@ -332,7 +345,7 @@ const PoolControl = () => {
                     <Icon className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium">{f.label}</p>
+                    <p className="font-medium">{label}</p>
                     <p className="text-xs text-muted-foreground">
                       {slideBlockedBySpa ? "Unavailable while spa is on" : subtitle}
                     </p>
