@@ -71,7 +71,7 @@ serve(async (req) => {
 
     const { data: home, error: homeErr } = await supabase
       .from("homes")
-      .select("id, name, slug, cover_photo_url, has_spa, spa_min_temp, spa_max_temp, controller_type, controller_enabled, active")
+      .select("id, name, slug, cover_photo_url, has_spa, spa_min_temp, spa_max_temp, controller_type, controller_enabled, active, hospitable_property_id")
       .eq("slug", slug)
       .eq("active", true)
       .maybeSingle();
@@ -98,14 +98,53 @@ serve(async (req) => {
 
       // Look up paid heating orders covering today or future dates for this home.
       const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
-      const { data: heatedDates } = await supabase
+      // Determine the active guest's reservation window (if any) so we only
+      // surface heating orders for the stay the current guest is on. If no
+      // reservation covers today, show nothing — past/future guests' orders
+      // shouldn't leak to whoever is currently in the house.
+      let stayStart: string | null = null;
+      let stayEnd: string | null = null; // checkout date (exclusive)
+      const pat = Deno.env.get("HOSPITABLE_PAT");
+      if (pat && home.hospitable_property_id) {
+        try {
+          const start = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const end = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+          const url = `https://public.api.hospitable.com/v2/reservations?properties[]=${encodeURIComponent(
+            home.hospitable_property_id,
+          )}&start_date=${start}&end_date=${end}`;
+          const r = await fetch(url, { headers: { Authorization: `Bearer ${pat}`, Accept: "application/json" } });
+          if (r.ok) {
+            const j = await r.json();
+            const reservations: Array<{ check_in: string; check_out: string; status: string }> =
+              (j.data || []).filter((res: any) => res.status === "accepted");
+            // Find a reservation covering today (check_in <= today < check_out).
+            const current = reservations.find(
+              (res) => res.check_in <= today && today < res.check_out,
+            );
+            if (current) {
+              stayStart = current.check_in;
+              stayEnd = current.check_out;
+            }
+          }
+        } catch (e) {
+          console.error("guest-pool-control: hospitable lookup failed", e);
+        }
+      }
+
+      const heatedQuery = supabase
         .from("order_dates")
         .select("date, temperature, orders!inner(home_id, status)")
         .eq("orders.home_id", home.id)
-        .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"])
-        .gte("date", today)
-        .order("date");
-      const heatingDays = (heatedDates || []).map((r: any) => ({ date: r.date, temperature: r.temperature }));
+        .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted"]);
+      // Clamp to the active stay window if we found one; otherwise return no heating info.
+      let heatingDays: { date: string; temperature: number }[] = [];
+      if (stayStart && stayEnd) {
+        const { data: heatedDates } = await heatedQuery
+          .gte("date", stayStart < today ? today : stayStart)
+          .lt("date", stayEnd)
+          .order("date");
+        heatingDays = (heatedDates || []).map((r: any) => ({ date: r.date, temperature: r.temperature }));
+      }
       const heatingToday = heatingDays.find((d) => d.date === today) || null;
 
       // List active mapped features
