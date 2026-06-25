@@ -317,6 +317,8 @@ const PoolControl = () => {
           const Icon = getFeatureIcon(f.icon_key);
           const isSlide = /slide/i.test(f.key) || /slide/i.test(f.label);
           const slideBlockedBySpa = isSlide && spa_active === true;
+          // Normalize common misspellings/typos that can appear in guest-visible labels.
+          const label = normalizeFeatureLabel(f);
           const subtitle = quiet_active
             ? "Paused for quiet hours"
             : cooldown > 0
@@ -332,7 +334,7 @@ const PoolControl = () => {
                     <Icon className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium">{f.label}</p>
+                    <p className="font-medium">{label}</p>
                     <p className="text-xs text-muted-foreground">
                       {slideBlockedBySpa ? "Unavailable while spa is on" : subtitle}
                     </p>
