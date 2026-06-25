@@ -1,15 +1,18 @@
 /**
- * Pool Heat — Raspberry Pi bridge server (v1.7)
+ * Pool Heat — Raspberry Pi bridge server (v1.8)
+ *
+ * v1.8: CRITICAL FIX — disposeClient() was calling client.close() which
+ *   does not exist in node-screenlogic 2.x; the correct method is
+ *   closeAsync(). The TypeError was being silently swallowed by the
+ *   try/catch, so connections were NEVER being torn down. Each failed
+ *   connection attempt leaked a socket + closure scope, causing the
+ *   memory guard to fire every ~3 minutes. This release:
+ *     - Calls closeAsync() with a 3s race-timeout
+ *     - Force-destroys the underlying client.client socket as a fallback
+ *     - Awaits dispose everywhere so cleanup completes before we move on
  *
  * v1.7: Added /api/iaqua/proxy with built-in rate limiting and memory safety.
- *   - Self-throttles iAquaLink calls to 1 every 4 seconds (15/min)
- *     to stay under iAquaLink's per-IP rate limit (~6-8/min observed)
- *   - Caps in-flight proxy queue at 8 to prevent OOM on Pi
- *   - Returns 429 + Retry-After when queue is full so cloud can back off
- *   - Strict 15s AbortController timeout per request
- *
  * v1.5.1: Race-with-timeout fix to prevent unhandled promise rejections.
- *   Top-level safety nets to keep service alive under unexpected errors.
  */
 
 const express = require("express");
@@ -23,22 +26,19 @@ const CONNECTION_CACHE_TTL_MS = 60_000;
 const MAX_LISTENERS_BEFORE_RECYCLE = 5;
 const GATEWAY_TIMEOUT_MS = 10_000;
 const UNIT_CONNECT_TIMEOUT_MS = 10_000;
+const DISPOSE_TIMEOUT_MS = 3_000;
 
 if (!AUTH_TOKEN) {
   console.error("FATAL: PI_AUTH_TOKEN env var is required");
   process.exit(1);
 }
 
-// Top-level safety nets — never let one bad request take down the whole
-// service. We log and move on; the request that triggered the rejection
-// has already returned 502 to its caller.
 process.on("unhandledRejection", (reason) => {
   const msg = reason instanceof Error ? reason.message : String(reason);
   console.error(`[unhandledRejection] ${msg}`);
 });
 process.on("uncaughtException", (err) => {
   console.error(`[uncaughtException] ${err.message}\n${err.stack}`);
-  // Stay alive — we'd rather degrade than die.
 });
 
 const app = express();
@@ -80,20 +80,37 @@ function listenerCountTooHigh(client) {
   return false;
 }
 
-function disposeClient(client) {
+/**
+ * Properly close a node-screenlogic UnitConnection.
+ *
+ * v1.8 fix: the old version called client.close(), which DOES NOT EXIST
+ * in node-screenlogic 2.x. The TypeError was caught silently, so we were
+ * leaking sockets on every dispose. The right method is closeAsync().
+ *
+ * We race closeAsync() against a short timeout so a hung close can't
+ * wedge the request path, and as a final belt-and-suspenders we destroy
+ * the underlying TCP socket directly (exposed as client.client by the
+ * library — yes, the naming is unfortunate).
+ */
+async function disposeClient(client) {
   if (!client) return;
   try { client.removeAllListeners?.(); } catch {}
-  try { client.close(); } catch {}
+  try {
+    if (typeof client.closeAsync === "function") {
+      await Promise.race([
+        client.closeAsync(),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("close timeout")), DISPOSE_TIMEOUT_MS),
+        ),
+      ]);
+    }
+  } catch (e) {
+    console.warn(`[dispose] closeAsync failed: ${e.message}, forcing socket destroy`);
+  } finally {
+    try { client.client?.destroy?.(); } catch {}
+  }
 }
 
-/**
- * Race a promise against a timeout. The loser is always handled, so neither
- * branch can produce an unhandled rejection. This is the v1.5.1 fix.
- *
- * If the underlying promise loses the race, we attach a no-op .catch() to
- * silently absorb its eventual rejection (or resolution). The original
- * resource is already being torn down by the caller's catch path.
- */
 function raceWithTimeout(promise, ms, errorMessage) {
   let timeoutId;
   const timeout = new Promise((_, rej) => {
@@ -101,11 +118,8 @@ function raceWithTimeout(promise, ms, errorMessage) {
   });
   return Promise.race([promise, timeout])
     .finally(() => clearTimeout(timeoutId))
-    // If `promise` eventually rejects AFTER the timeout already fired, attach
-    // a swallow handler so it doesn't become an unhandled rejection. This is
-    // safe because the caller has already moved on with our error.
     .catch((err) => {
-      promise.catch(() => {});  // attach NOW to silence late rejection
+      promise.catch(() => {});
       throw err;
     });
 }
@@ -131,15 +145,12 @@ async function openConnection(systemName, password) {
 
   const client = new UnitConnection();
   client.init(systemName, gatewayData.ipAddr, gatewayData.port, password);
-  // Pre-attach a swallow handler in case `connectAsync` rejects after our
-  // timeout already fired and the caller has moved on.
   const connectPromise = client.connectAsync();
   try {
     await raceWithTimeout(connectPromise, UNIT_CONNECT_TIMEOUT_MS, "unit connect timeout");
   } catch (e) {
-    // Make absolutely sure the underlying promise can't bubble up later
     connectPromise.catch(() => {});
-    disposeClient(client);
+    await disposeClient(client);
     throw e;
   }
 
@@ -151,15 +162,15 @@ async function getOrOpenClient(systemName, password) {
   if (cached && cached.expiresAt > Date.now() && cached.password === password) {
     if (listenerCountTooHigh(cached.client)) {
       console.log(`[recycle] ${systemName} (listener accumulation)`);
-      disposeClient(cached.client);
       connections.delete(systemName);
+      await disposeClient(cached.client);
     } else {
       cached.expiresAt = Date.now() + CONNECTION_CACHE_TTL_MS;
       return cached.client;
     }
   } else if (cached) {
-    disposeClient(cached.client);
     connections.delete(systemName);
+    await disposeClient(cached.client);
   }
 
   const client = await openConnection(systemName, password);
@@ -179,6 +190,10 @@ async function withConnection(systemName, password, handler) {
 
   let resolveLock, rejectLock;
   const lock = new Promise((res, rej) => { resolveLock = res; rejectLock = rej; });
+  // Pre-attach a swallow handler so a rejected lock with no awaiter
+  // (the common case after the first failure) doesn't surface as an
+  // unhandled rejection.
+  lock.catch(() => {});
   locks.set(systemName, lock);
 
   const startedAt = Date.now();
@@ -201,7 +216,7 @@ async function withConnection(systemName, password, handler) {
       if (cached && cached.client === client) {
         connections.delete(systemName);
       }
-      disposeClient(client);
+      await disposeClient(client);
     }
     rejectLock(e);
     throw e;
@@ -272,7 +287,7 @@ app.get("/healthz", (_req, res) => {
     cached_connections: connections.size,
     in_flight_locks: locks.size,
     iaqua_queue_depth: iaquaQueueDepth,
-    version: "1.7",
+    version: "1.8",
   });
 });
 
@@ -414,16 +429,7 @@ app.post("/api/pool/raw", async (req, res) => {
 });
 
 // ============================================================
-// iAquaLink passthrough (v1.7) — forward arbitrary iAquaLink API
-// calls from the cloud through this Pi's residential IP.
-//
-// iAquaLink rate-limits per-IP at roughly 6-8 calls/minute. We
-// self-throttle at 1 call per 4 seconds (15/min) to stay safely
-// under the limit. When local queue fills, returns 429 with
-// Retry-After hint so cloud can back off rather than blasting us.
-//
-// Memory safety: caps in-flight queue at 8, AbortController
-// timeout at 15s, releases response refs ASAP after sending reply.
+// iAquaLink passthrough (unchanged from v1.7)
 // ============================================================
 
 const IAQUA_ALLOWED_HOSTS = new Set([
@@ -432,9 +438,9 @@ const IAQUA_ALLOWED_HOSTS = new Set([
   "p-api.iaqualink.net",
 ]);
 
-const IAQUA_MIN_GAP_MS = 4000;        // min spacing between iAquaLink calls
-const IAQUA_MAX_QUEUE = 8;            // max waiting requests
-const IAQUA_FETCH_TIMEOUT_MS = 15_000; // hard timeout per call
+const IAQUA_MIN_GAP_MS = 4000;
+const IAQUA_MAX_QUEUE = 8;
+const IAQUA_FETCH_TIMEOUT_MS = 15_000;
 
 let iaquaLastCallAt = 0;
 let iaquaQueueDepth = 0;
@@ -447,7 +453,7 @@ async function waitForIaquaSlot() {
       const gap = now - iaquaLastCallAt;
       if (gap >= IAQUA_MIN_GAP_MS) {
         iaquaLastCallAt = now;
-        return; // slot acquired
+        return;
       }
       const wait = IAQUA_MIN_GAP_MS - gap;
       await new Promise((r) => setTimeout(r, wait + 50));
@@ -477,7 +483,6 @@ app.post("/api/iaqua/proxy", async (req, res) => {
     return res.status(403).json({ error: "host not allowed" });
   }
 
-  // Reject early if queue is too deep — protects Pi memory under bursts
   if (iaquaQueueDepth >= IAQUA_MAX_QUEUE) {
     return res
       .status(429)
@@ -485,7 +490,6 @@ app.post("/api/iaqua/proxy", async (req, res) => {
       .json({ error: "pi proxy queue full, retry later" });
   }
 
-  // Wait for a rate-limit slot (4s minimum since last iAquaLink call)
   await waitForIaquaSlot();
 
   const headers = {
@@ -501,7 +505,6 @@ app.post("/api/iaqua/proxy", async (req, res) => {
     fetchOpts.body = JSON.stringify(body);
   }
 
-  // Strict timeout via AbortController prevents pile-up on hung connections
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), IAQUA_FETCH_TIMEOUT_MS);
   fetchOpts.signal = controller.signal;
@@ -529,25 +532,26 @@ app.post("/api/iaqua/proxy", async (req, res) => {
   );
   return res.json({ status: upstreamStatus, body: bodyText });
 });
-// Self-healing memory guard. Node's GC sometimes fails to reclaim memory
-// under sustained load. If we cross a safe threshold, exit cleanly so
-// systemd restarts us with a fresh process.
+
+// Self-healing memory guard. With v1.8's leak fix this should now fire
+// rarely or never, but we keep it as a safety net.
 const MEMORY_THRESHOLD_MB = 600;
 setInterval(() => {
   const mb = Math.round(process.memoryUsage().rss / 1024 / 1024);
   if (mb > MEMORY_THRESHOLD_MB) {
     console.warn(`[memory-guard] ${mb}MB > ${MEMORY_THRESHOLD_MB}MB, restarting`);
-    process.exit(0);  // systemd auto-restart catches this
+    process.exit(0);
   }
 }, 10_000);
+
 app.listen(PORT, () => {
-  console.log(`pool-pi v1.7 listening on :${PORT}`);
+  console.log(`pool-pi v1.8 listening on :${PORT}`);
 });
 
-function shutdown() {
+async function shutdown() {
   console.log("shutting down…");
   for (const [name, entry] of connections.entries()) {
-    disposeClient(entry.client);
+    await disposeClient(entry.client);
     connections.delete(name);
   }
   process.exit(0);
