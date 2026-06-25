@@ -333,7 +333,7 @@ const PoolControl = () => {
                     <Icon className="w-5 h-5 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium">{label}</p>
+                    <p className="font-medium">{f.label}</p>
                     <p className="text-xs text-muted-foreground">
                       {slideBlockedBySpa ? "Unavailable while spa is on" : subtitle}
                     </p>
