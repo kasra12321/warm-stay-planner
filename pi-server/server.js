@@ -389,6 +389,38 @@ app.post("/api/pool/circuit", async (req, res) => {
   }
 });
 
+const LIGHT_SHOWS = {
+  off: 0, on: 1,
+  party: 5, romance: 6, caribbean: 7,
+  american: 8, sunset: 9, royal: 10,
+};
+
+app.post("/api/pool/light_show", async (req, res) => {
+  const { systemName: rawName, password, show } = req.body || {};
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
+  }
+  const cmd = LIGHT_SHOWS[String(show).toLowerCase()];
+  if (cmd === undefined) {
+    return res.status(400).json({
+      error: `Invalid show "${show}". Expected one of: ${Object.keys(LIGHT_SHOWS).join(", ")}.`,
+    });
+  }
+  try {
+    await withConnection(systemName, password ?? "", async (client) => {
+      await client.circuits.sendLightCommandAsync(cmd);
+    });
+    res.json({ ok: true, success: true });
+  } catch (e) {
+    console.error(`light_show ${systemName} show=${show}:`, e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
 app.post("/api/pool/raw", async (req, res) => {
   const { systemName: rawName, password } = req.body || {};
   const systemName = normalizeSystemName(rawName);
