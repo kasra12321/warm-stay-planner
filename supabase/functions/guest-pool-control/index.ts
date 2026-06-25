@@ -81,7 +81,7 @@ serve(async (req) => {
       });
     }
 
-    const { data: settings } = await supabase.from("settings").select("*").maybeSingle();
+    const settings = await getCachedSettings(supabase);
     const spaMin = home.spa_min_temp ?? settings?.spa_min_temp_default ?? 95;
     const spaMax = home.spa_max_temp ?? settings?.spa_max_temp_default ?? 104;
     const quietStart = settings?.quiet_start_hour ?? 22;
