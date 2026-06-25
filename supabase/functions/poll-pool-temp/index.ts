@@ -6,6 +6,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Module-scope settings cache (per-isolate, ~5 min TTL) to avoid re-reading
+// the `settings` row on every cron tick.
+let SETTINGS_CACHE: { value: any; expires: number } | null = null;
+async function getCachedSettings(supabase: any) {
+  if (SETTINGS_CACHE && SETTINGS_CACHE.expires > Date.now()) return SETTINGS_CACHE.value;
+  const { data } = await supabase.from("settings").select("quiet_start_hour, quiet_end_hour").maybeSingle();
+  SETTINGS_CACHE = { value: data || {}, expires: Date.now() + 5 * 60 * 1000 };
+  return SETTINGS_CACHE.value;
+}
+
+function getPacificHour(): number {
+  const fmt = new Intl.DateTimeFormat("en-US", { timeZone: "America/Los_Angeles", hour: "numeric", hour12: false });
+  return Number(fmt.format(new Date()));
+}
+function isQuietHour(start: number, end: number, hour = getPacificHour()): boolean {
+  if (start === end) return false;
+  return start < end ? hour >= start && hour < end : hour >= start || hour < end;
+}
+
 function parseIntSafe(v: any): number | null {
   if (v === null || v === undefined) return null;
   const n = parseInt(String(v), 10);
@@ -18,6 +37,17 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const supabase = createClient(supabaseUrl, serviceKey);
+
+  // Skip during Pacific quiet hours — nobody is viewing the dashboard and
+  // pools haven't moved. Cuts roughly a third of daily polls.
+  const settings = await getCachedSettings(supabase);
+  const quietStart = settings?.quiet_start_hour ?? 22;
+  const quietEnd = settings?.quiet_end_hour ?? 8;
+  if (isQuietHour(quietStart, quietEnd)) {
+    return new Response(JSON.stringify({ ok: true, skipped: "quiet_hours" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 
   // Pick the controller-enabled home with the oldest last_temp_check_at
   // (NULL first). One home per invocation; cron runs every 5 minutes so
