@@ -1,0 +1,1 @@
+ALTER TABLE public.home_features ADD COLUMN IF NOT EXISTS icon_key text;

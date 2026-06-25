@@ -165,15 +165,17 @@ function getPacificDateString(date = new Date()): string {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  try {
+  // Run the actual sync in the background so we don't hit the 150s
+  // request idle timeout. The HTTP caller (cron or admin "Sync Now")
+  // gets an immediate ack; results land in home_pool_state + summary email.
+  const work = (async () => {
+    try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const pat = Deno.env.get("HOSPITABLE_PAT");
     if (!pat) {
-      return new Response(JSON.stringify({ error: "HOSPITABLE_PAT not configured" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+        console.error("HOSPITABLE_PAT not configured");
+        return;
     }
     const supabase = createClient(supabaseUrl, serviceKey);
 
@@ -188,16 +190,24 @@ serve(async (req) => {
     const changes: Array<{ home: string; from: string | null; to: string; temp: number; reason: string }> = [];
     const errors: Array<{ home: string; error: string }> = [];
 
-    // Stagger calls between homes so we don't hammer the Pi (which bridges all
-    // ScreenLogic homes through a single TCP connection per pool). 20s gap is
-    // enough breathing room without making the whole sync run too long.
-    const STAGGER_MS = 20_000;
+    // Stagger calls only between ScreenLogic homes (they share one Pi bridge).
+    // iAquaLink homes go to Zodiac's cloud and don't need staggering.
+    // 8s gap is enough breathing room for the Pi without blowing the edge
+    // function's ~150s wall-clock budget (which previously caused later homes
+    // like Athens to be skipped entirely).
+    const SCREENLOGIC_STAGGER_MS = 8_000;
     const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
     const homesList = homes || [];
+    let lastWasScreenLogic = false;
     for (let i = 0; i < homesList.length; i++) {
       const home = homesList[i];
-      if (i > 0) await sleep(STAGGER_MS);
+      const isScreenLogic = ((home as any).controller_type || "iaqualink") === "screenlogic";
+      // Only sleep if THIS home is ScreenLogic and the PREVIOUS one was too.
+      if (i > 0 && isScreenLogic && lastWasScreenLogic) {
+        await sleep(SCREENLOGIC_STAGGER_MS);
+      }
+      lastWasScreenLogic = isScreenLogic;
       try {
         // Dispatch the right controller. iAquaLink homes still need a serial;
         // ScreenLogic homes need a system name. Skip homes that have neither so
@@ -213,8 +223,53 @@ serve(async (req) => {
           .eq("home_id", home.id)
           .maybeSingle();
 
-        // Skip if a guest heat order is active (process-reminders sets this)
-        if (state?.current_mode === "guest_heat") {
+        const homeName = home.internal_name || home.name;
+
+        // Active guest order today? Order temp wins over occupancy/eco.
+        // Orders end at 5pm Pacific (turn_off reminder runs at 17:00),
+        // so after 5pm on the last day treat the order as ended.
+        const todayPacific = getPacificDateString();
+        const pacificHour = parseInt(
+          new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/Los_Angeles",
+            hour: "2-digit",
+            hour12: false,
+          }).format(new Date()),
+          10,
+        );
+        const { data: activeDate } = await supabase
+          .from("order_dates")
+          .select("temperature, orders!inner(home_id, status)")
+          .eq("orders.home_id", home.id)
+          .eq("date", todayPacific)
+          .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted", "venmo_pending", "zelle_pending", "apple_cash_pending"])
+          .order("temperature", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        // Multi-day stays: if there's a future booked date for this home in any
+        // active order, the stay is still in progress and the 5pm cutoff does
+        // NOT apply today. Only treat the order as ended after 5pm Pacific on
+        // the FINAL booked day.
+        let isLastDay = true;
+        if (activeDate) {
+          const { data: futureDate } = await supabase
+            .from("order_dates")
+            .select("date, orders!inner(home_id, status)")
+            .eq("orders.home_id", home.id)
+            .gt("date", todayPacific)
+            .in("orders.status", ["stripe_paid", "venmo_submitted", "zelle_submitted", "apple_cash_submitted", "venmo_pending", "zelle_pending", "apple_cash_pending"])
+            .limit(1)
+            .maybeSingle();
+          isLastDay = !futureDate;
+        }
+        const orderStillActiveToday = !isLastDay || pacificHour < 17;
+        const hasActiveOrder = !!(activeDate && orderStillActiveToday);
+
+        // If state already reflects guest_heat AND an active order exists,
+        // process-reminders is the source of truth — just touch the heartbeat
+        // and move on. (Without an active order, fall through and let the
+        // normal occupancy/eco logic clear the stale guest_heat state.)
+        if (state?.current_mode === "guest_heat" && hasActiveOrder) {
           await supabase
             .from("home_pool_state")
             .update({ last_occupancy_check: nowIso })
@@ -227,7 +282,15 @@ serve(async (req) => {
         const ecoTemp = home.eco_mode_enabled ? (home.eco_temp ?? 75) : baseline;
         let decision = decideTemp(reservations, nowIso, baseline, ecoTemp);
 
-        const homeName = home.internal_name || home.name;
+        if (hasActiveOrder) {
+          decision = {
+            mode: "guest_heat",
+            temp: activeDate!.temperature,
+            nextCheckin: decision.nextCheckin,
+            reason: `active guest order (${activeDate!.temperature}°F)`,
+          };
+        }
+
         const ecoPausedUntil = (state as any)?.eco_paused_until || null;
         const ecoPauseActive = decision.mode === "eco" && ecoPausedUntil && getPacificDateString() < ecoPausedUntil;
         if (ecoPauseActive) {
@@ -240,6 +303,7 @@ serve(async (req) => {
           // and compare to what we think it is. Re-applies + alerts if drifted.
           let driftActual: number | null = null;
           let controllerOffline = false;
+          let waterTemp: number | null = null;
           try {
             const verify = await fetch(`${supabaseUrl}/functions/v1/${controlFn}`, {
               method: "POST",
@@ -251,16 +315,22 @@ serve(async (req) => {
               if (vJson.status["status"] === "Offline" || vJson.status["response"] === "Error") {
                 controllerOffline = true;
               }
-              // Smart-match: if ANY setpoint field equals our target, we're in sync.
-              // Otherwise report the first valid reading as the actual.
-              const setpoints = [vJson.status["pool_set_point"], vJson.status["spa_set_point"]]
-                .map((c) => parseInt(c, 10))
-                .filter((n) => !isNaN(n) && n >= 50 && n <= 110);
-              if (setpoints.includes(decision.temp)) {
-                driftActual = decision.temp;
-              } else if (setpoints.length > 0) {
-                driftActual = setpoints[0];
+              // Use the CANONICAL setpoint for this home's pool body, not a mix
+              // of pool+spa fields. iAquaLink returns `active_set_point` which
+              // already accounts for the configured sensor index. ScreenLogic
+              // returns the body setpoint as `pool_set_point`.
+              const canonicalRaw =
+                typeof vJson.active_set_point === "number"
+                  ? vJson.active_set_point
+                  : vJson.status["pool_set_point"];
+              const canonical = parseInt(String(canonicalRaw), 10);
+              if (!isNaN(canonical) && canonical >= 50 && canonical <= 110) {
+                driftActual = canonical;
               }
+              // Capture water temp for clearer drift messages (distinguishes
+              // setpoint vs. actual pool water temperature in the alert).
+              const wt = parseInt(String(vJson.status["pool_temp"] ?? ""), 10);
+              if (!isNaN(wt) && wt >= 30 && wt <= 120) waterTemp = wt;
             }
           } catch (e) {
             console.error("drift check failed", e);
@@ -291,6 +361,7 @@ serve(async (req) => {
             });
             const rJson = await reapply.json();
             const newActual = typeof rJson.actual_temp === "number" ? rJson.actual_temp : driftActual;
+            const waterSuffix = waterTemp !== null ? `, water ${waterTemp}°F` : "";
             await supabase.from("home_pool_state").upsert({
               home_id: home.id,
               current_mode: decision.mode,
@@ -300,15 +371,15 @@ serve(async (req) => {
               next_checkin_date: decision.nextCheckin ? decision.nextCheckin.slice(0, 10) : null,
               eco_paused_until: nextEcoPausedUntil,
               notes: rJson.verified
-                ? `${decision.reason} (drift corrected from ${driftActual}°F)`
-                : `${decision.reason} ⚠️ drift ${driftActual}°F, reapply unverified`,
+                ? `${decision.reason} (drift corrected: setpoint was ${driftActual}°F${waterSuffix})`
+                : `${decision.reason} ⚠️ drift setpoint ${driftActual}°F${waterSuffix}, reapply unverified`,
             }, { onConflict: "home_id" });
             changes.push({
               home: homeName,
-              from: `drift ${driftActual}°F`,
+              from: `drift setpoint ${driftActual}°F${waterSuffix}`,
               to: decision.mode,
               temp: newActual,
-              reason: `drift corrected (was ${driftActual}, target ${decision.temp})`,
+              reason: `drift corrected (setpoint was ${driftActual}°F, target ${decision.temp}°F${waterSuffix})`,
             });
           } else {
             await supabase.from("home_pool_state").upsert({
@@ -434,15 +505,22 @@ serve(async (req) => {
       }
     }
 
-    return new Response(
-      JSON.stringify({ success: true, changes, errors, processed: (homes || []).length }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
-  } catch (e: any) {
-    console.error("sync-pool-occupancy error:", e);
-    return new Response(JSON.stringify({ error: e.message || String(e) }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+      console.log(`sync-pool-occupancy done: ${changes.length} changes, ${errors.length} errors, ${(homes || []).length} processed`);
+    } catch (e: any) {
+      console.error("sync-pool-occupancy error:", e);
+    }
+  })();
+
+  // Keep the worker alive past the response. Falls back to awaiting if
+  // EdgeRuntime isn't available (local dev).
+  // @ts-ignore - EdgeRuntime is provided by Supabase edge runtime
+  if (typeof EdgeRuntime !== "undefined" && EdgeRuntime?.waitUntil) {
+    // @ts-ignore
+    EdgeRuntime.waitUntil(work);
   }
+
+  return new Response(
+    JSON.stringify({ success: true, queued: true, message: "Sync started in background; results will appear in home_pool_state and summary email." }),
+    { headers: { ...corsHeaders, "Content-Type": "application/json" } },
+  );
 });

@@ -38,24 +38,65 @@ serve(async (req) => {
     const blockedSet = new Set((blocked || []).map((b: any) => b.date));
     const orderDates = order.order_dates as any[];
 
+    // Hard cutoff: no same-day bookings after 3 PM Pacific
+    const nowPacific = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+    const todayPacific = new Date().toLocaleDateString("en-CA", { timeZone: "America/Los_Angeles" });
+    if (nowPacific.getHours() >= 15) {
+      for (const od of orderDates) {
+        if (od.date === todayPacific) {
+          throw new Error("Same-day bookings close at 3 PM. Please choose another date.");
+        }
+      }
+    }
+
     for (const od of orderDates) {
       if (blockedSet.has(od.date)) {
         throw new Error(`Date ${od.date} is no longer available`);
       }
     }
 
-    // Server-side price validation
-    const { data: options } = await supabase
-      .from("heating_options")
-      .select("*")
-      .eq("active", true);
+    // Server-side price validation using forecast bands / fallback
+    const { data: settings } = await supabase
+      .from("settings")
+      .select("booking_window_days")
+      .single();
+    const windowDays = settings?.booking_window_days || 14;
+    const lastBookable = new Date(`${todayPacific}T00:00:00Z`);
+    lastBookable.setUTCDate(lastBookable.getUTCDate() + windowDays - 1);
+    const lastBookableStr = lastBookable.toISOString().slice(0, 10);
 
-    const priceMap = new Map((options || []).map((o: any) => [o.temperature, o.price_per_day]));
+    const [bandsResp, optsResp, fallbackResp, forecastResp] = await Promise.all([
+      supabase.from("pricing_bands").select("*").order("sort_order"),
+      supabase.from("pricing_band_options").select("*"),
+      supabase.from("pricing_fallback_options").select("*"),
+      supabase.from("daily_forecast").select("date, high_temp_f"),
+    ]);
+    const bands = bandsResp.data || [];
+    const bandOpts = optsResp.data || [];
+    const fallback = fallbackResp.data || [];
+    const forecast = new Map((forecastResp.data || []).map((f: any) => [f.date, f.high_temp_f]));
+
+    const priceFor = (date: string, temp: number): number | null => {
+      const high = forecast.get(date);
+      if (high !== undefined) {
+        const band = bands.find((b: any) => high >= b.outdoor_low_f && high <= b.outdoor_high_f);
+        if (band) {
+          const opt = bandOpts.find((o: any) => o.band_id === band.id && o.temperature === temp);
+          if (opt) return Number(opt.price_per_day);
+        }
+      }
+      const fb = fallback.find((o: any) => o.temperature === temp);
+      return fb ? Number(fb.price_per_day) : null;
+    };
+
     let serverTotal = 0;
     for (const od of orderDates) {
-      const price = priceMap.get(od.temperature);
-      if (price === undefined) throw new Error(`Invalid temperature ${od.temperature}`);
-      serverTotal += Number(price);
+      if (od.date < todayPacific || od.date > lastBookableStr) {
+        throw new Error(`Date ${od.date} is outside the booking window`);
+      }
+      const price = priceFor(od.date, od.temperature);
+      if (price === null) throw new Error(`No pricing available for ${od.date} at ${od.temperature}°F`);
+      serverTotal += price;
     }
 
     if (Math.abs(serverTotal - Number(order.total)) > 0.01) {

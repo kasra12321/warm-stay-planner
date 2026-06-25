@@ -13,6 +13,33 @@ export interface HeatingOption {
   active: boolean;
 }
 
+export interface PricingBand {
+  id: string;
+  label: string | null;
+  outdoor_low_f: number;
+  outdoor_high_f: number;
+  sort_order: number;
+  options: PricingBandOption[];
+}
+
+export interface PricingBandOption {
+  id: string;
+  band_id: string;
+  temperature: number;
+  price_per_day: number;
+}
+
+export interface FallbackOption {
+  id: string;
+  temperature: number;
+  price_per_day: number;
+}
+
+export interface DailyForecast {
+  date: string;
+  high_temp_f: number;
+}
+
 export interface SelectedDate {
   date: string; // YYYY-MM-DD
   temperature: number;
@@ -51,4 +78,9 @@ export interface Settings {
   admin_email: string;
   admin_calendar_email: string;
   twilio_from_number: string;
+  forecast_zip?: string | null;
+  booking_window_days?: number;
+  forecast_last_fetched_at?: string | null;
+  forecast_lat?: number | null;
+  forecast_lon?: number | null;
 }

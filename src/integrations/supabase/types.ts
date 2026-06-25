@@ -14,6 +14,27 @@ export type Database = {
   }
   public: {
     Tables: {
+      daily_forecast: {
+        Row: {
+          date: string
+          fetched_at: string
+          high_temp_f: number
+          zip: string | null
+        }
+        Insert: {
+          date: string
+          fetched_at?: string
+          high_temp_f: number
+          zip?: string | null
+        }
+        Update: {
+          date?: string
+          fetched_at?: string
+          high_temp_f?: number
+          zip?: string | null
+        }
+        Relationships: []
+      }
       heating_options: {
         Row: {
           active: boolean
@@ -38,6 +59,53 @@ export type Database = {
         }
         Relationships: []
       }
+      home_features: {
+        Row: {
+          active: boolean
+          controller_target: string
+          created_at: string
+          feature_key: string
+          home_id: string
+          icon_key: string | null
+          id: string
+          label: string
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          active?: boolean
+          controller_target: string
+          created_at?: string
+          feature_key: string
+          home_id: string
+          icon_key?: string | null
+          id?: string
+          label: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          active?: boolean
+          controller_target?: string
+          created_at?: string
+          feature_key?: string
+          home_id?: string
+          icon_key?: string | null
+          id?: string
+          label?: string
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "home_features_home_id_fkey"
+            columns: ["home_id"]
+            isOneToOne: false
+            referencedRelation: "homes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       home_pool_state: {
         Row: {
           created_at: string
@@ -46,8 +114,12 @@ export type Database = {
           eco_paused_until: string | null
           home_id: string
           id: string
+          last_actual_setpoint: number | null
+          last_actual_temp: number | null
           last_occupancy_check: string | null
           last_synced_at: string | null
+          last_temp_check_at: string | null
+          last_temp_check_error: string | null
           next_checkin_date: string | null
           notes: string | null
           updated_at: string
@@ -59,8 +131,12 @@ export type Database = {
           eco_paused_until?: string | null
           home_id: string
           id?: string
+          last_actual_setpoint?: number | null
+          last_actual_temp?: number | null
           last_occupancy_check?: string | null
           last_synced_at?: string | null
+          last_temp_check_at?: string | null
+          last_temp_check_error?: string | null
           next_checkin_date?: string | null
           notes?: string | null
           updated_at?: string
@@ -72,8 +148,12 @@ export type Database = {
           eco_paused_until?: string | null
           home_id?: string
           id?: string
+          last_actual_setpoint?: number | null
+          last_actual_temp?: number | null
           last_occupancy_check?: string | null
           last_synced_at?: string | null
+          last_temp_check_at?: string | null
+          last_temp_check_error?: string | null
           next_checkin_date?: string | null
           notes?: string | null
           updated_at?: string
@@ -98,6 +178,7 @@ export type Database = {
           created_at: string
           eco_mode_enabled: boolean
           eco_temp: number
+          has_spa: boolean
           hospitable_property_id: string | null
           iaqualink_serial: string | null
           iaqualink_temp_sensor_index: number
@@ -107,6 +188,8 @@ export type Database = {
           screenlogic_password: string | null
           screenlogic_system_name: string | null
           slug: string
+          spa_max_temp: number | null
+          spa_min_temp: number | null
           updated_at: string
         }
         Insert: {
@@ -118,6 +201,7 @@ export type Database = {
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
+          has_spa?: boolean
           hospitable_property_id?: string | null
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
@@ -127,6 +211,8 @@ export type Database = {
           screenlogic_password?: string | null
           screenlogic_system_name?: string | null
           slug: string
+          spa_max_temp?: number | null
+          spa_min_temp?: number | null
           updated_at?: string
         }
         Update: {
@@ -138,6 +224,7 @@ export type Database = {
           created_at?: string
           eco_mode_enabled?: boolean
           eco_temp?: number
+          has_spa?: boolean
           hospitable_property_id?: string | null
           iaqualink_serial?: string | null
           iaqualink_temp_sensor_index?: number
@@ -147,6 +234,8 @@ export type Database = {
           screenlogic_password?: string | null
           screenlogic_system_name?: string | null
           slug?: string
+          spa_max_temp?: number | null
+          spa_min_temp?: number | null
           updated_at?: string
         }
         Relationships: []
@@ -305,6 +394,89 @@ export type Database = {
         }
         Relationships: []
       }
+      pricing_band_options: {
+        Row: {
+          band_id: string
+          created_at: string
+          id: string
+          price_per_day: number
+          temperature: number
+        }
+        Insert: {
+          band_id: string
+          created_at?: string
+          id?: string
+          price_per_day: number
+          temperature: number
+        }
+        Update: {
+          band_id?: string
+          created_at?: string
+          id?: string
+          price_per_day?: number
+          temperature?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "pricing_band_options_band_id_fkey"
+            columns: ["band_id"]
+            isOneToOne: false
+            referencedRelation: "pricing_bands"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      pricing_bands: {
+        Row: {
+          created_at: string
+          id: string
+          label: string | null
+          outdoor_high_f: number
+          outdoor_low_f: number
+          sort_order: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          outdoor_high_f: number
+          outdoor_low_f: number
+          sort_order?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          label?: string | null
+          outdoor_high_f?: number
+          outdoor_low_f?: number
+          sort_order?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      pricing_fallback_options: {
+        Row: {
+          created_at: string
+          id: string
+          price_per_day: number
+          temperature: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          price_per_day: number
+          temperature: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          price_per_day?: number
+          temperature?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
@@ -391,10 +563,26 @@ export type Database = {
           admin_calendar_email: string | null
           admin_email: string | null
           admin_sms_number: string | null
+          allow_spa_temp_during_quiet: boolean
           apple_cash_instructions: string | null
           apple_cash_phone: string | null
+          auto_spa_shutoff_enabled: boolean
+          auto_spa_shutoff_end_hour: number
+          auto_spa_shutoff_home_ids: string[]
+          auto_spa_shutoff_interval_minutes: number
+          auto_spa_shutoff_last_run_at: string | null
+          auto_spa_shutoff_start_hour: number
+          booking_window_days: number
           created_at: string
+          forecast_last_fetched_at: string | null
+          forecast_lat: number | null
+          forecast_lon: number | null
+          forecast_zip: string | null
           id: string
+          quiet_end_hour: number
+          quiet_start_hour: number
+          spa_max_temp_default: number
+          spa_min_temp_default: number
           twilio_from_number: string | null
           updated_at: string
           venmo_handle: string | null
@@ -405,10 +593,26 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
+          auto_spa_shutoff_enabled?: boolean
+          auto_spa_shutoff_end_hour?: number
+          auto_spa_shutoff_home_ids?: string[]
+          auto_spa_shutoff_interval_minutes?: number
+          auto_spa_shutoff_last_run_at?: string | null
+          auto_spa_shutoff_start_hour?: number
+          booking_window_days?: number
           created_at?: string
+          forecast_last_fetched_at?: string | null
+          forecast_lat?: number | null
+          forecast_lon?: number | null
+          forecast_zip?: string | null
           id?: string
+          quiet_end_hour?: number
+          quiet_start_hour?: number
+          spa_max_temp_default?: number
+          spa_min_temp_default?: number
           twilio_from_number?: string | null
           updated_at?: string
           venmo_handle?: string | null
@@ -419,10 +623,26 @@ export type Database = {
           admin_calendar_email?: string | null
           admin_email?: string | null
           admin_sms_number?: string | null
+          allow_spa_temp_during_quiet?: boolean
           apple_cash_instructions?: string | null
           apple_cash_phone?: string | null
+          auto_spa_shutoff_enabled?: boolean
+          auto_spa_shutoff_end_hour?: number
+          auto_spa_shutoff_home_ids?: string[]
+          auto_spa_shutoff_interval_minutes?: number
+          auto_spa_shutoff_last_run_at?: string | null
+          auto_spa_shutoff_start_hour?: number
+          booking_window_days?: number
           created_at?: string
+          forecast_last_fetched_at?: string | null
+          forecast_lat?: number | null
+          forecast_lon?: number | null
+          forecast_zip?: string | null
           id?: string
+          quiet_end_hour?: number
+          quiet_start_hour?: number
+          spa_max_temp_default?: number
+          spa_min_temp_default?: number
           twilio_from_number?: string | null
           updated_at?: string
           venmo_handle?: string | null

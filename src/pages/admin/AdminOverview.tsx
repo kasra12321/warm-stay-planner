@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDateDisplay } from '@/lib/pacific-time';
-import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer, Loader2, PowerOff } from 'lucide-react';
+import { CalendarDays, DollarSign, ListOrdered, Bell, Thermometer, Loader2, PowerOff, Flame, Copy } from 'lucide-react';
 import { toast } from 'sonner';
 
 function timeAgo(iso: string | null): string {
@@ -57,7 +57,7 @@ const AdminOverview = () => {
     queryFn: async () => {
       const { data: homes, error: hErr } = await supabase
         .from('homes')
-        .select('id, name, baseline_temp, controller_type')
+        .select('id, name, slug, baseline_temp, controller_type')
         .eq('controller_enabled', true)
         .eq('active', true)
         .order('name');
@@ -126,6 +126,35 @@ const AdminOverview = () => {
     },
   });
 
+  const { data: activeOrders } = useQuery({
+    queryKey: ['admin-active-heat-orders'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('orders')
+        .select('id, guest_name, status, homes(name), order_dates(date, temperature)')
+        .in('status', ['stripe_paid', 'venmo_submitted', 'zelle_submitted', 'apple_cash_submitted'])
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      const today = getTomorrowPacificDate(); // returns YYYY-MM-DD for tomorrow
+      // Build today (Pacific) string
+      const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const parts = Object.fromEntries(fmt.formatToParts(new Date()).map(p => [p.type, p.value]));
+      const todayStr = `${parts.year}-${parts.month}-${parts.day}`;
+      const horizon = new Date();
+      horizon.setDate(horizon.getDate() + 14);
+      const horizonParts = Object.fromEntries(fmt.formatToParts(horizon).map(p => [p.type, p.value]));
+      const horizonStr = `${horizonParts.year}-${horizonParts.month}-${horizonParts.day}`;
+      void today;
+      return (data || [])
+        .map((o: any) => {
+          const dates = (o.order_dates || []).filter((d: any) => d.date >= todayStr && d.date <= horizonStr).sort((a: any, b: any) => a.date.localeCompare(b.date));
+          return { ...o, _dates: dates };
+        })
+        .filter((o: any) => o._dates.length > 0)
+        .map((o: any) => ({ ...o, _todayTemp: o._dates.find((d: any) => d.date === todayStr)?.temperature ?? null, _todayStr: todayStr }));
+    },
+  });
+
   const totalOrders = orders?.length || 0;
   const stripePaid = orders?.filter(o => o.status === 'stripe_paid').length || 0;
   const venmoCount = orders?.filter(o => o.payment_method === 'venmo').length || 0;
@@ -169,6 +198,48 @@ const AdminOverview = () => {
       </div>
 
       {/* Upcoming reminders */}
+      {/* Active heat orders */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Flame className="w-5 h-5" />
+            Active Heat Orders
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!activeOrders?.length ? (
+            <p className="text-muted-foreground text-sm">No active or upcoming heat orders</p>
+          ) : (
+            <div className="space-y-2">
+              {activeOrders.map((o: any) => {
+                const first = o._dates[0].date;
+                const last = o._dates[o._dates.length - 1].date;
+                const temps = [...new Set(o._dates.map((d: any) => d.temperature))].join('°/') + '°F';
+                const range = first === last ? formatDateDisplay(first) : `${formatDateDisplay(first)} – ${formatDateDisplay(last)}`;
+                const isActiveToday = o._todayTemp !== null;
+                return (
+                  <div key={o.id} className="flex items-center justify-between text-sm border-b last:border-0 pb-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-medium">
+                        {(o.homes as any)?.name} · <span className="text-muted-foreground font-normal">{o.guest_name}</span>
+                      </div>
+                      <div className="text-xs text-muted-foreground">{range} · {temps}</div>
+                    </div>
+                    {isActiveToday ? (
+                      <Badge className="text-xs whitespace-nowrap bg-orange-500 text-white hover:bg-orange-500/90">
+                        Active today {o._todayTemp}°F
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-xs whitespace-nowrap">Upcoming</Badge>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
@@ -217,6 +288,37 @@ const AdminOverview = () => {
                   <div key={home.id} className="flex items-start justify-between gap-3 border-b last:border-0 pb-3 last:pb-0">
                     <div className="min-w-0 flex-1">
                       <div className="font-medium">{home.name}</div>
+                      <button
+                        onClick={() => {
+                          const url = `${window.location.origin}/pool/${home.slug}`;
+                          navigator.clipboard.writeText(url);
+                          toast.success('Guest link copied');
+                        }}
+                        className="text-xs text-primary inline-flex items-center gap-1 hover:underline mt-0.5"
+                      >
+                        <Copy className="w-3 h-3" /> /pool/{home.slug}
+                      </button>
+                      {(() => {
+                        const s = state as any;
+                        return (
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs mt-1">
+                            <span className="text-foreground">
+                              <span className="text-muted-foreground">Pool:</span>{' '}
+                              <span className="font-semibold">{s?.last_actual_temp != null ? `${s.last_actual_temp}°F` : '—'}</span>
+                            </span>
+                            <span className="text-foreground">
+                              <span className="text-muted-foreground">Setpoint:</span>{' '}
+                              <span className="font-semibold">{s?.last_actual_setpoint != null ? `${s.last_actual_setpoint}°F` : '—'}</span>
+                            </span>
+                            <span className="text-muted-foreground">
+                              {s?.last_temp_check_at ? `checked ${timeAgo(s.last_temp_check_at)}` : 'never checked'}
+                            </span>
+                            {s?.last_temp_check_error && (
+                              <span className="text-destructive">⚠ {s.last_temp_check_error}</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                       <div className="text-xs text-muted-foreground mt-0.5">
                         {state?.next_checkin_date
                           ? `Next guest: ${formatDateDisplay(state.next_checkin_date)}`

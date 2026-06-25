@@ -28,14 +28,14 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
     setLoading(paymentMethod);
 
     try {
-      // All orders start in a *pending* state. Manual orders are only
-      // finalized (status flipped + notifications sent) once the guest
-      // taps "I've paid" on the instructions screen. Stripe orders are
-      // finalized via the Stripe webhook / finalize function.
+      // Manual-payment orders are trusted on submission: we assume the
+      // guest will pay. The admin can delete the order later if payment
+      // never arrives. Stripe orders still wait for the webhook to mark
+      // them paid.
       const MANUAL_STATUS = {
-        venmo: 'venmo_pending',
-        zelle: 'zelle_pending',
-        apple_cash: 'apple_cash_pending',
+        venmo: 'venmo_submitted',
+        zelle: 'zelle_submitted',
+        apple_cash: 'apple_cash_submitted',
       } as const;
       const status =
         paymentMethod === 'stripe'
@@ -78,7 +78,13 @@ export function PaymentSelection({ home, guestInfo, selectedDates, total, onComp
         return;
       }
 
-      // Manual order is pending. Notifications fire only after "I've paid".
+      // Manual order is trusted as submitted. Fire admin notify + fanout
+      // (reminders, guest SMS, receipt) immediately so the order is fully
+      // active even if the guest closes the tab from the instructions
+      // screen.
+      supabase.functions
+        .invoke('notify-admin-order', { body: { orderId: order.id } })
+        .catch((e) => console.error('notify-admin-order failed:', e));
       setPendingManual({ orderId: order.id, method: paymentMethod });
     } catch (error) {
       console.error('Order creation failed:', error);

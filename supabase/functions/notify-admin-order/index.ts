@@ -113,8 +113,12 @@ serve(async (req) => {
     void smsBody;
 
     // Admin email via Resend
-    const recipientEmail = settings?.admin_email || settings?.admin_calendar_email;
-    if (recipientEmail && LOVABLE_API_KEY && RESEND_API_KEY) {
+    const rawRecipients = settings?.admin_email || settings?.admin_calendar_email || "";
+    const recipientEmails = rawRecipients
+      .split(",")
+      .map((e: string) => e.trim())
+      .filter((e: string) => e.length > 0);
+    if (recipientEmails.length > 0 && LOVABLE_API_KEY && RESEND_API_KEY) {
       try {
         const html = `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -138,7 +142,7 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             from: "Pool Heat <noreply@ocadventurehomes.com>",
-            to: [recipientEmail],
+            to: recipientEmails,
             subject: `🔥 New Order: ${homeName} — ${dateRange} ($${order.total} via ${paymentLabel})`,
             html,
           }),

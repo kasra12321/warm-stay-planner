@@ -52,6 +52,41 @@ async function iaquaGetHome(serial: string, sessionId: string) {
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
 
+// Fetch the one-touch macro list/state for an iAquaLink panel. Returns the
+// raw response body; one-touches appear under `onetouch_screen` (similar
+// shape to `home_screen`) with keys like onetouch_N_label / onetouch_N_state.
+async function iaquaGetOneTouch(serial: string, sessionId: string) {
+  const url =
+    `${SESSION_URL}?actionID=command&command=get_onetouch` +
+    `&serial=${encodeURIComponent(serial)}` +
+    `&sessionID=${encodeURIComponent(sessionId)}`;
+  const r = await fetch(url);
+  return { status: r.status, body: r.ok ? await r.json() : await r.text() };
+}
+
+// Parse the iAquaLink onetouch_screen payload into a structured list.
+// Shape returned by iAquaLink:
+//   onetouch_screen: [
+//     { status: "Online" }, { response: "..." },
+//     { onetouch_1: [{ status: "1" }, { state: "0" }, { label: "All OFF" }] },
+//     { onetouch_2: [...] }, ...
+//   ]
+// `status` "1" means the macro is configured on the panel, "0" means unused.
+function parseOneTouchMacros(otScreen: any[]): Array<{ index: number; status: string; state: string; label: string }> {
+  const out: Array<{ index: number; status: string; state: string; label: string }> = [];
+  for (const row of otScreen || []) {
+    for (const [k, v] of Object.entries(row || {})) {
+      const m = /^onetouch_(\d+)$/.exec(k);
+      if (!m || !Array.isArray(v)) continue;
+      const idx = parseInt(m[1], 10);
+      const flat: Record<string, string> = {};
+      for (const sub of v as any[]) for (const [sk, sv] of Object.entries(sub || {})) flat[sk] = String(sv);
+      out.push({ index: idx, status: flat.status ?? "", state: flat.state ?? "", label: flat.label ?? `OneTouch ${idx}` });
+    }
+  }
+  return out;
+}
+
 async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number, tempIndex: 1 | 2 = 1) {
   const param = tempIndex === 2 ? "temp2" : "temp1";
   const url =
@@ -59,6 +94,19 @@ async function iaquaSetPoolTemp(serial: string, sessionId: string, tempF: number
     `&serial=${encodeURIComponent(serial)}` +
     `&sessionID=${encodeURIComponent(sessionId)}` +
     `&${param}=${tempF}`;
+  const r = await fetch(url);
+  return { status: r.status, body: r.ok ? await r.json() : await r.text() };
+}
+
+// Generic command sender. iAquaLink toggle commands (set_aux_X, set_pool_heater,
+// set_spa_heater, set_pool_pump, etc.) just toggle current state — they don't
+// accept an on/off arg. Caller is responsible for reading state first if it
+// needs to enforce a desired absolute state.
+async function iaquaSendCommand(serial: string, sessionId: string, command: string) {
+  const url =
+    `${SESSION_URL}?actionID=command&command=${encodeURIComponent(command)}` +
+    `&serial=${encodeURIComponent(serial)}` +
+    `&sessionID=${encodeURIComponent(sessionId)}`;
   const r = await fetch(url);
   return { status: r.status, body: r.ok ? await r.json() : await r.text() };
 }
@@ -148,7 +196,23 @@ serve(async (req) => {
     // Auth: verify caller is admin (skip for internal service calls with service-role auth)
     const authHeader = req.headers.get("Authorization") || "";
     const token = authHeader.replace("Bearer ", "");
-    const isServiceRole = token === serviceKey;
+    // Treat as service-role if the token matches the service key exactly,
+    // OR if it's a JWT whose `role` claim is `service_role`. The strict
+    // string match alone is fragile because Supabase's signing-key system
+    // can hand different functions different forms of the service key
+    // (legacy JWT vs. new sb_secret_...), which caused sync-pool-occupancy
+    // calls to be rejected as "Unauthorized".
+    let isServiceRole = token === serviceKey;
+    if (!isServiceRole && token && token.split(".").length === 3) {
+      try {
+        const payload = JSON.parse(
+          atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")),
+        );
+        if (payload?.role === "service_role") isServiceRole = true;
+      } catch {
+        // not a decodable JWT — fall through to user auth check
+      }
+    }
 
     if (!isServiceRole) {
       const userClient = createClient(supabaseUrl, anonKey, {
@@ -224,6 +288,7 @@ serve(async (req) => {
 
     if (action === "set-temp") {
       const { home_id, temp } = body;
+      const bodyKind: "pool" | "spa" = body.body === "spa" ? "spa" : "pool";
       if (!home_id || typeof temp !== "number") {
         return new Response(JSON.stringify({ error: "home_id and temp required" }), {
           status: 400,
@@ -237,7 +302,11 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      const tempIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      // home.iaqualink_temp_sensor_index points at the POOL setpoint index.
+      // On dual-body controllers the spa lives on the opposite index.
+      const poolIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      const spaIndex = (poolIndex === 2 ? 1 : 2) as 1 | 2;
+      const tempIndex = bodyKind === "spa" ? spaIndex : poolIndex;
       const res = await withRelogin(supabase, (sid) => iaquaSetPoolTemp(home.iaqualink_serial, sid, temp, tempIndex));
       if (res.status >= 400) {
         return new Response(JSON.stringify({ error: `set_temps ${res.status}: ${JSON.stringify(res.body)}` }), {
@@ -263,6 +332,11 @@ serve(async (req) => {
           // We verify against the field that matches the index we actually wrote to,
           // so a misconfigured index surfaces as "not verified" instead of silently
           // landing on the wrong setpoint.
+          // Field the panel reports for the index we just wrote to. This must
+          // mirror get-status: index 1 -> spa_set_point (on dual controllers)
+          // or pool_set_point (pool-only); index 2 -> pool_set_point. Using
+          // bodyKind here is wrong for homes whose pool sits on temp1 (e.g.
+          // Athens), where pool_set_point reflects the UNUSED temp2 sensor.
           const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
           const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
           const primaryVal = parseInt(flat[primaryField], 10);
@@ -318,7 +392,55 @@ serve(async (req) => {
       for (const row of homeScreen) {
         for (const [k, v] of Object.entries(row)) flat[k] = String(v);
       }
-      return new Response(JSON.stringify({ success: true, status: flat, raw: res.body }), {
+      // Also merge one-touch macro state so the UI can reflect which
+      // one-touches are currently running.
+      try {
+        const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
+        if (ot.status < 400) {
+          for (const m of parseOneTouchMacros((ot.body as any)?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+            flat[`onetouch_${m.index}_label`] = m.label;
+            flat[`onetouch_${m.index}_status`] = m.status;
+          }
+        }
+      } catch { /* ignore */ }
+      // Normalize the active set point based on the configured sensor index.
+      // index 1 -> temp1 -> spa_set_point on dual pool/spa controllers, or
+      //                     pool_set_point on pool-only controllers
+      // index 2 -> temp2 -> pool_set_point on dual controllers
+      const tempIndex = (home.iaqualink_temp_sensor_index === 2 ? 2 : 1) as 1 | 2;
+      const primaryField = tempIndex === 2 ? "pool_set_point" : "spa_set_point";
+      const fallbackField = tempIndex === 2 ? "spa_set_point" : "pool_set_point";
+      const primaryVal = parseInt(flat[primaryField], 10);
+      const fallbackVal = parseInt(flat[fallbackField], 10);
+      let activeSetPoint: number | null = null;
+      if (!isNaN(primaryVal)) activeSetPoint = primaryVal;
+      else if (!isNaN(fallbackVal)) activeSetPoint = fallbackVal;
+      // Override pool_set_point in the returned status with the active one so
+      // the admin UI shows the setpoint that actually corresponds to this
+      // home's pool sensor (e.g. Athens uses temp1 -> spa_set_point).
+      if (activeSetPoint != null) flat.pool_set_point = String(activeSetPoint);
+      // Same normalization for the *current* temperature reading. iAquaLink
+      // reports both pool_temp and spa_temp; for homes whose active sensor is
+      // temp1 (e.g. Athens), the meaningful water temp is spa_temp. Override
+      // pool_temp so downstream pollers and drift checks read the correct
+      // sensor and ignore the unused one.
+      const primaryTempField = tempIndex === 2 ? "pool_temp" : "spa_temp";
+      const fallbackTempField = tempIndex === 2 ? "spa_temp" : "pool_temp";
+      const primaryTempVal = parseInt(flat[primaryTempField], 10);
+      const fallbackTempVal = parseInt(flat[fallbackTempField], 10);
+      let activeTemp: number | null = null;
+      if (!isNaN(primaryTempVal)) activeTemp = primaryTempVal;
+      // Only fall back across bodies on single-body (pool-only) controllers.
+      // On dual pool/spa panels, an empty primary field means that body's
+      // sensor isn't reading right now (e.g. spa mode is on, pool loop
+      // isn't circulating) — using the other body's temp would mislabel
+      // the spa reading as the pool temp.
+      else if (!home.has_spa && !isNaN(fallbackTempVal)) activeTemp = fallbackTempVal;
+      // Always write the resolved value (or empty string) so downstream
+      // consumers don't pick up the other body's temp from the raw payload.
+      flat.pool_temp = activeTemp != null ? String(activeTemp) : "";
+      return new Response(JSON.stringify({ success: true, status: flat, raw: res.body, active_set_point: activeSetPoint, temp_index: tempIndex }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -386,6 +508,136 @@ serve(async (req) => {
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Toggle a numbered aux (1-7) on/off. iAquaLink commands toggle, so we
+    // read state first and only send the command if the current state
+    // differs from the desired state. Returns the post-action state.
+    if (action === "set-aux" || action === "set-heater" || action === "set-onetouch") {
+      const { home_id, on } = body;
+      const auxIndex = action === "set-aux" ? Number(body.aux_index) : null;
+      const heaterKind = action === "set-heater" ? String(body.heater || "spa") : null; // "spa" | "pool"
+      const onetouchIndex = action === "set-onetouch" ? Number(body.onetouch_index) : null;
+      if (!home_id || typeof on !== "boolean") {
+        return new Response(JSON.stringify({ error: "home_id and on(boolean) required" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (action === "set-aux" && (!Number.isFinite(auxIndex!) || auxIndex! < 1 || auxIndex! > 7)) {
+        return new Response(JSON.stringify({ error: "aux_index must be 1-7" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (action === "set-onetouch" && (!Number.isFinite(onetouchIndex!) || onetouchIndex! < 1 || onetouchIndex! > 12)) {
+        return new Response(JSON.stringify({ error: "onetouch_index must be 1-12" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const { data: home } = await supabase.from("homes").select("*").eq("id", home_id).maybeSingle();
+      if (!home?.iaqualink_serial) {
+        return new Response(JSON.stringify({ error: "Home has no iAquaLink serial" }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const stateKey =
+        action === "set-aux" ? `aux_${auxIndex}_state`
+        : action === "set-onetouch" ? `onetouch_${onetouchIndex}_state`
+        : (heaterKind === "pool" ? "pool_heater" : "spa_heater");
+      const cmd =
+        action === "set-aux" ? `set_aux_${auxIndex}`
+        : action === "set-onetouch" ? `set_onetouch_${onetouchIndex}`
+        : (heaterKind === "pool" ? "set_pool_heater" : "set_spa_heater");
+      const isOneTouch = action === "set-onetouch";
+
+      // Read current state (from home_screen for aux/heater, onetouch_screen for one-touch)
+      const beforeRes = await withRelogin(supabase, (sid) =>
+        isOneTouch ? iaquaGetOneTouch(home.iaqualink_serial, sid) : iaquaGetHome(home.iaqualink_serial, sid)
+      );
+      if (beforeRes.status >= 400) {
+        return new Response(JSON.stringify({ error: `get_home ${beforeRes.status}` }), {
+          status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const flatten = (raw: any): Record<string, string> => {
+        const flat: Record<string, string> = {};
+        if (isOneTouch) {
+          for (const m of parseOneTouchMacros(raw?.onetouch_screen || [])) {
+            flat[`onetouch_${m.index}_state`] = m.state;
+          }
+        } else {
+          for (const row of (raw?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+        }
+        return flat;
+      };
+      const beforeFlat = flatten(beforeRes.body);
+      const currentOn = beforeFlat[stateKey] === "1";
+      let toggled = false;
+      if (currentOn !== on) {
+        const cmdRes = await withRelogin(supabase, (sid) => iaquaSendCommand(home.iaqualink_serial, sid, cmd));
+        if (cmdRes.status >= 400) {
+          return new Response(JSON.stringify({ error: `${cmd} ${cmdRes.status}: ${JSON.stringify(cmdRes.body)}` }), {
+            status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        toggled = true;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+      // Verify
+      let verified = !toggled; // if no toggle needed, state already matches
+      let finalState = currentOn;
+      try {
+        const after = await withRelogin(supabase, (sid) =>
+          isOneTouch ? iaquaGetOneTouch(home.iaqualink_serial, sid) : iaquaGetHome(home.iaqualink_serial, sid)
+        );
+        const afterFlat = flatten(after.body);
+        finalState = afterFlat[stateKey] === "1";
+        verified = finalState === on;
+      } catch { /* ignore */ }
+      return new Response(JSON.stringify({ success: true, verified, state_key: stateKey, state: finalState, toggled }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Return the list of toggleable items detected on this iAquaLink panel
+    // (aux_N labels + heater states) so admin UI can build feature mapping
+    // dropdowns. We derive the labels from the panel's one_touch / aux name
+    // fields when present, otherwise fall back to "Aux N".
+    if (action === "list-controls") {
+      const { home_id } = body;
+      if (!home_id) return new Response(JSON.stringify({ error: "home_id required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const { data: home } = await supabase.from("homes").select("*").eq("id", home_id).maybeSingle();
+      if (!home?.iaqualink_serial) return new Response(JSON.stringify({ error: "Home has no iAquaLink serial" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const r = await withRelogin(supabase, (sid) => iaquaGetHome(home.iaqualink_serial, sid));
+      if (r.status >= 400) return new Response(JSON.stringify({ error: `get_home ${r.status}` }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      const flat: Record<string, string> = {};
+      for (const row of ((r.body as any)?.home_screen || [])) for (const [k, v] of Object.entries(row)) flat[k] = String(v);
+      const controls: Array<{ target: string; label: string; state?: string }> = [];
+      for (let i = 1; i <= 7; i++) {
+        const labelKey = `aux_${i}_label`;
+        const stateKey = `aux_${i}_state`;
+        if (flat[stateKey] != null || flat[labelKey]) {
+          controls.push({ target: `aux:${i}`, label: flat[labelKey] || `Aux ${i}`, state: flat[stateKey] });
+        }
+      }
+      if (flat.pool_heater != null) controls.push({ target: "heater:pool", label: "Pool Heater", state: flat.pool_heater });
+      if (flat.spa_heater != null) controls.push({ target: "heater:spa", label: "Spa Heater", state: flat.spa_heater });
+      // Also list any configured one-touch macros so admins can map them as
+      // guest-facing features. iAquaLink returns onetouch_screen as an array
+      // of rows like { onetouch_N: [{status}, {state}, {label}] }. We only
+      // surface macros whose status == "1" (configured on the panel).
+      try {
+        const ot = await withRelogin(supabase, (sid) => iaquaGetOneTouch(home.iaqualink_serial, sid));
+        if (ot.status < 400) {
+          const macros = parseOneTouchMacros((ot.body as any)?.onetouch_screen || []);
+          for (const m of macros) {
+            if (m.status !== "1") continue;
+            // Skip placeholder labels like "OneTouch 4" / "ONETOUCH 5".
+            if (/^onetouch\s*\d+$/i.test(m.label)) continue;
+            controls.push({ target: `onetouch:${m.index}`, label: m.label, state: m.state });
+          }
+        }
+      } catch { /* ignore */ }
+      return new Response(JSON.stringify({ success: true, controls }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     return new Response(JSON.stringify({ error: "Unknown action" }), {
