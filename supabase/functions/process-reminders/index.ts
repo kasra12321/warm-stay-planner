@@ -6,6 +6,15 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Module-scope settings cache (per-isolate, 5 min TTL).
+let SETTINGS_CACHE: { value: any; expires: number } | null = null;
+async function getCachedSettings(supabase: any) {
+  if (SETTINGS_CACHE && SETTINGS_CACHE.expires > Date.now()) return SETTINGS_CACHE.value;
+  const { data } = await supabase.from("settings").select("*").single();
+  SETTINGS_CACHE = { value: data, expires: Date.now() + 5 * 60 * 1000 };
+  return data;
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -16,7 +25,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { data: settings } = await supabase.from("settings").select("*").single();
+    const settings = await getCachedSettings(supabase);
 
     const now = new Date().toISOString();
     const { data: dueReminders, error: fetchErr } = await supabase

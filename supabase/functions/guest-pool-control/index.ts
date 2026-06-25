@@ -44,6 +44,18 @@ function quietEndDescription(end: number): string {
 
 // In-memory simple throttle per slug (best-effort; resets on cold start)
 const lastActionAt = new Map<string, number>();
+
+// Module-scope settings cache (per-isolate, 60-second TTL). Guest pages can
+// poll the status endpoint frequently — this avoids re-reading `settings` on
+// every call.
+let SETTINGS_CACHE: { value: any; expires: number } | null = null;
+async function getCachedSettings(supabase: any) {
+  if (SETTINGS_CACHE && SETTINGS_CACHE.expires > Date.now()) return SETTINGS_CACHE.value;
+  const { data } = await supabase.from("settings").select("*").maybeSingle();
+  SETTINGS_CACHE = { value: data, expires: Date.now() + 60 * 1000 };
+  return data;
+}
+
 function throttled(slug: string, minMs = 5000): boolean {
   const now = Date.now();
   const last = lastActionAt.get(slug) || 0;
@@ -81,7 +93,7 @@ serve(async (req) => {
       });
     }
 
-    const { data: settings } = await supabase.from("settings").select("*").maybeSingle();
+    const settings = await getCachedSettings(supabase);
     const spaMin = home.spa_min_temp ?? settings?.spa_min_temp_default ?? 95;
     const spaMax = home.spa_max_temp ?? settings?.spa_max_temp_default ?? 104;
     const quietStart = settings?.quiet_start_hour ?? 22;

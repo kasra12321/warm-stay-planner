@@ -20,6 +20,16 @@ const corsHeaders = {
 const FAILURE_THRESHOLD = 2; // require 2 consecutive failures before alerting
 const TIMEOUT_MS = 10_000;
 
+// Module-scope cache for admin_email — invalidated every 10 minutes.
+let SETTINGS_CACHE: { adminEmail: string; expires: number } | null = null;
+async function getCachedAdminEmail(supabase: any): Promise<string> {
+  if (SETTINGS_CACHE && SETTINGS_CACHE.expires > Date.now()) return SETTINGS_CACHE.adminEmail;
+  const { data } = await supabase.from("settings").select("admin_email").single();
+  const adminEmail = data?.admin_email || "kasrajafroodi@gmail.com";
+  SETTINGS_CACHE = { adminEmail, expires: Date.now() + 10 * 60 * 1000 };
+  return adminEmail;
+}
+
 async function sendAdminEmail(opts: {
   recipient: string;
   subject: string;
@@ -115,8 +125,7 @@ serve(async (req) => {
 
     let alertSent = false;
     if (wentDown || recovered) {
-      const { data: settings } = await supabase.from("settings").select("admin_email").single();
-      const recipient = settings?.admin_email || "kasrajafroodi@gmail.com";
+      const recipient = await getCachedAdminEmail(supabase);
       const downSince = state?.last_status_change_at
         ? new Date(state.last_status_change_at).toLocaleString("en-US", { timeZone: "America/Los_Angeles" })
         : "unknown";
@@ -158,18 +167,24 @@ serve(async (req) => {
 
     // Persist updated state
     const statusChanged = prevStatus !== newStatus;
-    await supabase
-      .from("pi_health_state")
-      .update({
-        status: newStatus,
-        last_checked_at: now,
-        last_status_change_at: statusChanged ? now : state?.last_status_change_at,
-        last_error: errorMessage,
-        consecutive_failures: newFailures,
-        last_alert_sent_at: alertSent ? now : state?.last_alert_sent_at,
-        updated_at: now,
-      })
-      .eq("id", state?.id);
+    // Skip the write entirely on a steady-state healthy check — nothing changed
+    // and `last_checked_at` is informational. Cuts ~95% of pi_health_state writes.
+    const errorChanged = (state?.last_error || null) !== (errorMessage || null);
+    const shouldWrite = statusChanged || errorChanged || alertSent || !isHealthy;
+    if (shouldWrite) {
+      await supabase
+        .from("pi_health_state")
+        .update({
+          status: newStatus,
+          last_checked_at: now,
+          last_status_change_at: statusChanged ? now : state?.last_status_change_at,
+          last_error: errorMessage,
+          consecutive_failures: newFailures,
+          last_alert_sent_at: alertSent ? now : state?.last_alert_sent_at,
+          updated_at: now,
+        })
+        .eq("id", state?.id);
+    }
 
     return new Response(
       JSON.stringify({
