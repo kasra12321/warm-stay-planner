@@ -112,17 +112,30 @@ async function iaquaSendCommand(serial: string, sessionId: string, command: stri
 }
 
 // Reusable helper: gets a valid session, re-logging in if needed
+// Module-scope cache for the cached row in `iaqualink_credentials`. The row
+// changes only on a re-login (we trigger one on 401 below), so a 10-min TTL
+// is safe and saves ~one row read per invocation across all callers.
+let CRED_CACHE: { row: any; expires: number } | null = null;
+function invalidateCredCache() { CRED_CACHE = null; }
+
 async function getValidSession(supabase: any): Promise<{ session_id: string; auth_token: string; user_id_external: string; email: string }> {
   const email = Deno.env.get("IAQUALINK_EMAIL");
   const password = Deno.env.get("IAQUALINK_PASSWORD");
   if (!email || !password) throw new Error("IAQUALINK_EMAIL or IAQUALINK_PASSWORD not configured");
 
-  const { data: cached } = await supabase
-    .from("iaqualink_credentials")
-    .select("*")
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  let cached: any = null;
+  if (CRED_CACHE && CRED_CACHE.expires > Date.now()) {
+    cached = CRED_CACHE.row;
+  } else {
+    const { data } = await supabase
+      .from("iaqualink_credentials")
+      .select("*")
+      .order("updated_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    cached = data;
+    CRED_CACHE = { row: data, expires: Date.now() + 10 * 60 * 1000 };
+  }
 
   if (cached?.session_id && cached?.auth_token && cached?.user_id_external) {
     return {
@@ -147,6 +160,7 @@ async function getValidSession(supabase: any): Promise<{ session_id: string; aut
   } else {
     await supabase.from("iaqualink_credentials").insert(row);
   }
+  invalidateCredCache();
   return { session_id: fresh.session_id, auth_token: fresh.authentication_token, user_id_external: fresh.id, email };
 }
 
@@ -178,6 +192,7 @@ async function withRelogin<T>(
     } else {
       await supabase.from("iaqualink_credentials").insert(row);
     }
+    invalidateCredCache();
     res = await call(fresh.session_id);
   }
   return res;
