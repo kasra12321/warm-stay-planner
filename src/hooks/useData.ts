@@ -50,6 +50,27 @@ export function useHeatingOptions() {
   });
 }
 
+export function useCurrentPoolTemp(homeId: string | null) {
+  return useQuery({
+    queryKey: ['current-pool-temp', homeId],
+    queryFn: async () => {
+      if (!homeId) return null;
+      const { data, error } = await supabase.rpc('get_current_pool_temp', {
+        p_home_id: homeId,
+      });
+      if (error) throw error;
+      const row = (data as { temp_f: number | null; checked_at: string | null }[])?.[0];
+      if (!row || row.temp_f == null || !row.checked_at) return null;
+      // Ignore stale readings (older than ~2 hours)
+      const ageMs = Date.now() - new Date(row.checked_at).getTime();
+      if (ageMs > 2 * 60 * 60 * 1000) return null;
+      return { temp_f: row.temp_f, checked_at: row.checked_at };
+    },
+    enabled: !!homeId,
+    refetchInterval: 5 * 60 * 1000,
+  });
+}
+
 export function useBlockedDates(homeId: string | null) {
   return useQuery({
     queryKey: ['blocked-dates', homeId],
