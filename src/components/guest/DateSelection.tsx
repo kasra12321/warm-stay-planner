@@ -2,12 +2,22 @@ import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useBlockedDates, usePricingBands, useFallbackOptions, useDailyForecast, useSettings } from '@/hooks/useData';
+import { useBlockedDates, usePricingBands, useFallbackOptions, useDailyForecast, useSettings, useCurrentPoolTemp } from '@/hooks/useData';
 import type { SelectedDate } from '@/lib/types';
 import { getOptionsForDate, addDaysPacific } from '@/lib/pricing';
 import { isSameDayWarning, isSameDayCutoff, formatDateDisplay, getTodayPacific } from '@/lib/pacific-time';
 import { ArrowLeft } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface Props {
   homeId: string;
