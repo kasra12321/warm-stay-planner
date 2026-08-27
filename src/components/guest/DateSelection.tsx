@@ -302,6 +302,29 @@ export function DateSelection({
           </div>
         </DrawerContent>
       </Drawer>
+
+      <AlertDialog open={!!pendingOption} onOpenChange={open => !open && setPendingOption(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>The pool is already this warm</AlertDialogTitle>
+            <AlertDialogDescription>
+              The pool is already at {poolTemp}°F, which is at or above the {pendingOption?.temperature}°F you're selecting.
+              You may not need to pay for heating today. Do you still want to add this?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Choose a higher temperature</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingOption) commitTemp(pendingOption);
+                setPendingOption(null);
+              }}
+            >
+              Add anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
