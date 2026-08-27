@@ -38,6 +38,7 @@ export function DateSelection({
   const { data: fallback } = useFallbackOptions();
   const { data: forecast } = useDailyForecast();
   const { data: settings } = useSettings();
+  const { data: currentTemp } = useCurrentPoolTemp(homeId);
   const windowDays = settings?.booking_window_days || 14;
 
   const todayStr = getTodayPacific();
@@ -49,6 +50,7 @@ export function DateSelection({
   });
   const [drawerDate, setDrawerDate] = useState<string | null>(null);
   const [sameDayWarningShown, setSameDayWarningShown] = useState(false);
+  const [pendingOption, setPendingOption] = useState<{ temperature: number; price: number } | null>(null);
 
   const blockedSet = useMemo(() => new Set(blockedDates || []), [blockedDates]);
   const selectedMap = useMemo(() => {
