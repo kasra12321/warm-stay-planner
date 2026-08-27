@@ -11,23 +11,16 @@ Current pool temperature is already recorded for every home (polled roughly ever
 1. **Expose current pool temperature to the guest page (read-only, safe).**
    Add a small database function that returns, for a given home, only: current water temperature and when it was last checked. No setpoints, credentials, or other internal fields.
 
-2. **Show the current temperature in the date/temperature picker.**
-   In the temperature drawer, add a line like:
-   "Pool is currently 86°F (checked 12 minutes ago)."
-   Only shown when the reading is fresh (under ~2 hours old); otherwise it's hidden rather than showing stale info.
+   The current temperature is never displayed on its own — it is only referenced inside a warning, and only when the guest is choosing a temperature at or below it.
 
-3. **Flag temperature options at or below the current temperature.**
-   Any option whose temperature is less than or equal to the current pool temperature gets a clear inline note on the option itself:
-   "Pool is already at this temperature — heating may not be needed."
-   The option stays selectable (weather can cool the water, and the guest may still want it held there), but it is visually de-emphasized.
-
-4. **Confirmation step before selecting such an option.**
-   If a guest taps an option at or below the current temperature, show a short confirmation dialog:
+2. **Confirmation only when the choice is at or below the current temperature.**
+   If a guest taps an option whose temperature is less than or equal to the current pool temperature, show a short confirmation dialog:
    "The pool is already at 86°F, which is warmer than the 85°F you're selecting. You may not need to pay for heating today. Do you still want to add this?"
    Buttons: "Choose a higher temperature" (returns to the list) and "Add anyway".
+   Options above the current temperature behave exactly as they do today — no badges, no extra text, nothing new on screen.
 
-5. **Summary-level reminder.**
-   If the order summary contains any date whose selected temperature is at or below the current pool temperature, show a single warning strip above the Continue button so it can't be missed at checkout.
+3. **Summary-level reminder.**
+   If the order summary contains any date whose selected temperature is at or below the current pool temperature, show a single warning strip above the Continue button so it can't be missed at checkout. It disappears once no such date remains.
 
 ## Notes / decisions
 
