@@ -26,11 +26,11 @@ Current pool temperature is already recorded for every home (polled roughly ever
 
 - Warning only — bookings are never blocked. The guest can always proceed.
 - The comparison uses the single latest known water temperature for the home; it applies to all selected dates, since we have no forecast of future water temperature.
-- If no fresh temperature reading exists for a home (for example the controller is offline), nothing changes and no warnings appear.
+- If no fresh reading exists for a home (reading older than ~2 hours, or the controller is offline), nothing changes and no warnings appear.
 
 ## Technical details
 
 - New security-definer database function `get_current_pool_temp(p_home_id uuid)` returning `(temp_f int, checked_at timestamptz)`, sourced from `home_pool_state.last_actual_temp` / `last_temp_check_at`, executable by `anon` and `authenticated`. `home_pool_state` RLS stays admin-only.
 - New hook `useCurrentPoolTemp(homeId)` in `src/hooks/useData.ts` (5-minute refetch interval).
-- `src/components/guest/DateSelection.tsx`: takes the current temp, renders the drawer header line, per-option flag, an AlertDialog confirmation, and the summary warning strip.
+- `src/components/guest/DateSelection.tsx`: adds an AlertDialog confirmation on selecting an option at or below the current temp, plus the summary warning strip. No always-visible temperature display anywhere.
 - No changes to pricing logic, order creation, Stripe session creation, or any edge function.
