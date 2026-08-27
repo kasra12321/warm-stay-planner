@@ -237,6 +237,14 @@ export function DateSelection({
             <span>Total</span>
             <span>${total.toFixed(2)}</span>
           </div>
+          {poolTemp !== null && selectedDates.some(d => isAtOrBelowCurrent(d.temperature)) && (
+            <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-warning-foreground">
+                The pool is currently {poolTemp}°F, which is at or above one or more of the temperatures you selected. You may not need to pay for heating on those days.
+              </p>
+            </div>
+          )}
           <Button onClick={onContinue} className="w-full h-12 text-base font-semibold">
             Continue
           </Button>
