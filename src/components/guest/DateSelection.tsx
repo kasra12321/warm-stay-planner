@@ -103,11 +103,25 @@ export function DateSelection({
     }
   };
 
-  const handleSelectTemp = (opt: { temperature: number; price: number }) => {
+  const poolTemp = currentTemp?.temp_f ?? null;
+  const isAtOrBelowCurrent = (temperature: number) =>
+    poolTemp !== null && temperature <= poolTemp;
+
+  const commitTemp = (opt: { temperature: number; price: number }) => {
     if (drawerDate) {
       onToggleDate(drawerDate, opt.temperature, opt.price);
       setDrawerDate(null);
     }
+  };
+
+  const handleSelectTemp = (opt: { temperature: number; price: number }) => {
+    if (!drawerDate) return;
+    const alreadySelected = selectedMap.get(drawerDate)?.temperature === opt.temperature;
+    if (!alreadySelected && isAtOrBelowCurrent(opt.temperature)) {
+      setPendingOption(opt);
+      return;
+    }
+    commitTemp(opt);
   };
 
   const handleRemoveFromDrawer = () => {
