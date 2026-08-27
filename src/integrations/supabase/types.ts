@@ -680,6 +680,13 @@ export type Database = {
           date: string
         }[]
       }
+      get_current_pool_temp: {
+        Args: { p_home_id: string }
+        Returns: {
+          checked_at: string
+          temp_f: number
+        }[]
+      }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]

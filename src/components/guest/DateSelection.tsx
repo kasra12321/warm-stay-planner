@@ -2,12 +2,22 @@ import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, AlertTriangle, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useBlockedDates, usePricingBands, useFallbackOptions, useDailyForecast, useSettings } from '@/hooks/useData';
+import { useBlockedDates, usePricingBands, useFallbackOptions, useDailyForecast, useSettings, useCurrentPoolTemp } from '@/hooks/useData';
 import type { SelectedDate } from '@/lib/types';
 import { getOptionsForDate, addDaysPacific } from '@/lib/pricing';
 import { isSameDayWarning, isSameDayCutoff, formatDateDisplay, getTodayPacific } from '@/lib/pacific-time';
 import { ArrowLeft } from 'lucide-react';
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 interface Props {
   homeId: string;
@@ -28,6 +38,7 @@ export function DateSelection({
   const { data: fallback } = useFallbackOptions();
   const { data: forecast } = useDailyForecast();
   const { data: settings } = useSettings();
+  const { data: currentTemp } = useCurrentPoolTemp(homeId);
   const windowDays = settings?.booking_window_days || 14;
 
   const todayStr = getTodayPacific();
@@ -39,6 +50,7 @@ export function DateSelection({
   });
   const [drawerDate, setDrawerDate] = useState<string | null>(null);
   const [sameDayWarningShown, setSameDayWarningShown] = useState(false);
+  const [pendingOption, setPendingOption] = useState<{ temperature: number; price: number } | null>(null);
 
   const blockedSet = useMemo(() => new Set(blockedDates || []), [blockedDates]);
   const selectedMap = useMemo(() => {
@@ -91,11 +103,25 @@ export function DateSelection({
     }
   };
 
-  const handleSelectTemp = (opt: { temperature: number; price: number }) => {
+  const poolTemp = currentTemp?.temp_f ?? null;
+  const isAtOrBelowCurrent = (temperature: number) =>
+    poolTemp !== null && temperature <= poolTemp;
+
+  const commitTemp = (opt: { temperature: number; price: number }) => {
     if (drawerDate) {
       onToggleDate(drawerDate, opt.temperature, opt.price);
       setDrawerDate(null);
     }
+  };
+
+  const handleSelectTemp = (opt: { temperature: number; price: number }) => {
+    if (!drawerDate) return;
+    const alreadySelected = selectedMap.get(drawerDate)?.temperature === opt.temperature;
+    if (!alreadySelected && isAtOrBelowCurrent(opt.temperature)) {
+      setPendingOption(opt);
+      return;
+    }
+    commitTemp(opt);
   };
 
   const handleRemoveFromDrawer = () => {
@@ -211,6 +237,14 @@ export function DateSelection({
             <span>Total</span>
             <span>${total.toFixed(2)}</span>
           </div>
+          {poolTemp !== null && selectedDates.some(d => isAtOrBelowCurrent(d.temperature)) && (
+            <div className="flex items-start gap-2 bg-warning/10 border border-warning/30 rounded-lg p-3">
+              <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0 mt-0.5" />
+              <p className="text-xs text-warning-foreground">
+                The pool is currently {poolTemp}°F, which is at or above one or more of the temperatures you selected. You may not need to pay for heating on those days.
+              </p>
+            </div>
+          )}
           <Button onClick={onContinue} className="w-full h-12 text-base font-semibold">
             Continue
           </Button>
@@ -268,6 +302,29 @@ export function DateSelection({
           </div>
         </DrawerContent>
       </Drawer>
+
+      <AlertDialog open={!!pendingOption} onOpenChange={open => !open && setPendingOption(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>The pool is already this warm</AlertDialogTitle>
+            <AlertDialogDescription>
+              The pool is already at {poolTemp}°F, which is at or above the {pendingOption?.temperature}°F you're selecting.
+              You may not need to pay for heating today. Do you still want to add this?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Choose a higher temperature</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingOption) commitTemp(pendingOption);
+                setPendingOption(null);
+              }}
+            >
+              Add anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
