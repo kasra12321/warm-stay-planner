@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
+import { hasQuietHoursExemption } from "../_shared/quiet-hours-exemption.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -99,7 +100,7 @@ serve(async (req) => {
     const quietStart = settings?.quiet_start_hour ?? 22;
     const quietEnd = settings?.quiet_end_hour ?? 8;
     const allowSpaTempDuringQuiet = settings?.allow_spa_temp_during_quiet ?? true;
-    const quietActive = isQuietHour(quietStart, quietEnd);
+    const quietActive = isQuietHour(quietStart, quietEnd) && !hasQuietHoursExemption(home.id);
 
     if (action === "status") {
       const { data: state } = await supabase
