@@ -27,8 +27,10 @@ The Pi exposes:
 | Method | Path                | Purpose                                           |
 |--------|---------------------|---------------------------------------------------|
 | `GET`  | `/healthz`          | Tunnel/uptime check (no auth)                     |
-| `POST` | `/api/pool/status`  | Read current temps + heater state for one system  |
+| `POST` | `/api/pool/status`  | Read current temps, heater state and heat mode (`pool_heat_mode` / `spa_heat_mode`) for one system |
 | `POST` | `/api/pool/heater`  | Set the heater set-point and verify it stuck      |
+| `POST` | `/api/pool/heat_mode` | Set one body's heat mode (`body`: `pool`/`spa`, `mode`: 0 Off, 1 Solar, 2 Solar preferred, 3 Heater) and verify it by reading it back |
+| `POST` | `/api/pool/circuits`, `/api/pool/circuit`, `/api/pool/light_show`, `/api/pool/raw` | Circuit list / on-off, light shows, raw equipment dump |
 
 All `/api/*` routes require `Authorization: Bearer <PI_AUTH_TOKEN>`.
 

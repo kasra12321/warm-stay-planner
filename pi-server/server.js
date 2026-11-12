@@ -1,5 +1,10 @@
 /**
- * Pool Heat — Raspberry Pi bridge server (v1.8)
+ * Pool Heat — Raspberry Pi bridge server (v1.9)
+ *
+ * v1.9: Heat mode. /api/pool/status now reports pool_heat_mode and
+ *   spa_heat_mode (node-screenlogic HeatModes: 0 Off, 1 Solar, 2 Solar
+ *   preferred, 3 Heater / heat pump), and POST /api/pool/heat_mode sets one
+ *   body's mode and reads it back. Additive: existing callers are unaffected.
  *
  * v1.8: CRITICAL FIX — disposeClient() was calling client.close() which
  *   does not exist in node-screenlogic 2.x; the correct method is
@@ -238,6 +243,7 @@ async function fetchStatus(client) {
   const pool = bodies[0] || {};
   const spa = bodies[1] || {};
   const heaterStr = (h) => (h && Number(h) > 0 ? "1" : "0");
+  const heatModeNum = (m) => (Number.isInteger(m) ? m : null);
 
   const stateById = new Map();
   for (const c of equip?.circuitArray || equip?.circuits || []) {
@@ -270,9 +276,11 @@ async function fetchStatus(client) {
     pool_temp: pool.currentTemp ?? pool.currentTemperature ?? pool.lastTemperature ?? null,
     pool_set_point: pool.heatSetPoint ?? pool.setPoint ?? null,
     pool_heater: heaterStr(pool.heatStatus),
+    pool_heat_mode: heatModeNum(pool.heatMode),
     spa_temp: spa.currentTemp ?? spa.currentTemperature ?? spa.lastTemperature ?? null,
     spa_set_point: spa.heatSetPoint ?? spa.setPoint ?? null,
     spa_heater: heaterStr(spa.heatStatus),
+    spa_heat_mode: heatModeNum(spa.heatMode),
     air_temp: equip?.airTemp ?? equip?.airTemperature ?? null,
     circuits,
   };
@@ -287,7 +295,7 @@ app.get("/healthz", (_req, res) => {
     cached_connections: connections.size,
     in_flight_locks: locks.size,
     iaqua_queue_depth: iaquaQueueDepth,
-    version: "1.8",
+    version: "1.9",
   });
 });
 
@@ -342,6 +350,50 @@ app.post("/api/pool/heater", async (req, res) => {
     });
   } catch (e) {
     console.error(`heater ${systemName}:`, e.message);
+    res.status(502).json({ error: e.message });
+  }
+});
+
+// Heat mode is an absolute set (not a toggle), so it is safe to repeat. The
+// library only acks the command, so verify by reading the mode back.
+// 4 ("don't change") is not accepted.
+const HEAT_MODES = new Set([0, 1, 2, 3]);
+
+app.post("/api/pool/heat_mode", async (req, res) => {
+  const { systemName: rawName, password, mode, body: bodyType } = req.body || {};
+  if (!rawName) return res.status(400).json({ error: "systemName required" });
+  const systemName = normalizeSystemName(rawName);
+  if (!systemName) {
+    return res.status(400).json({
+      error: `Invalid systemName "${rawName}". Expected 6-char hex like "0C-B6-F9".`,
+    });
+  }
+  if (bodyType !== "pool" && bodyType !== "spa") {
+    return res.status(400).json({ error: 'body must be "pool" or "spa"' });
+  }
+  // A missing/null/"" mode must not coerce to 0 (Off).
+  const m =
+    typeof mode === "number" ? mode : typeof mode === "string" && mode.trim() !== "" ? Number(mode) : NaN;
+  if (!HEAT_MODES.has(m)) {
+    return res.status(400).json({ error: "mode must be 0 (off), 1 (solar), 2 (solar preferred) or 3 (heater)" });
+  }
+  try {
+    const result = await withConnection(systemName, password ?? "", async (client) => {
+      const bodyIndex = bodyType === "spa" ? 1 : 0;
+      await client.bodies.setHeatModeAsync(bodyIndex, m);
+      await new Promise((r) => setTimeout(r, VERIFY_DELAY_MS));
+      const status = await fetchStatus(client);
+      const actual = bodyIndex === 0 ? status.pool_heat_mode : status.spa_heat_mode;
+      return { actual, verified: actual === m, status };
+    });
+    res.json({
+      success: true,
+      actual_mode: result.actual,
+      verified: result.verified,
+      status: result.status,
+    });
+  } catch (e) {
+    console.error(`heat_mode ${systemName} ${bodyType}=${m}:`, e.message);
     res.status(502).json({ error: e.message });
   }
 });
@@ -577,7 +629,7 @@ setInterval(() => {
 }, 10_000);
 
 app.listen(PORT, () => {
-  console.log(`pool-pi v1.8 listening on :${PORT}`);
+  console.log(`pool-pi v1.9 listening on :${PORT}`);
 });
 
 async function shutdown() {
